@@ -1,0 +1,25 @@
+{
+  "short_name": "Draw on My Face",
+  "name": "Draw on My Face",
+  "start_url": "/draw-on-my-face",
+  "icons": [
+    {
+      "src": "/icons/favicon-64x64.png",
+      "sizes": "64x64",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/favicon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/favicon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "display": "standalone",
+  "theme_color": "#BA0C2F",
+  "background_color": "white"
+}
