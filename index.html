@@ -50,6 +50,7 @@
     const userId = `userId-${ crypto.randomUUID() }`; // Thank you Bettlee 🎉
     const defaultStyle = "#FF00FF";
     let activeStyle = "#BA0C2F";
+    var sendSeq = 0;
 
     let screenWidth = 0;
     let screenHeight = 0;
@@ -113,12 +114,14 @@
 
     function publishPendingPoint() {
         if (!pendingPoint) return;
+        sendSeq++;
 
         const message = {
             x: pendingPoint.x,
             y: pendingPoint.y,
             userId: userId,
             style: activeStyle,
+            seq: sendSeq,
         };
         pendingPoint = null;
 
@@ -143,6 +146,12 @@
         const track = userTracks[id];
         message.expires = Date.now() + pointLifetimeMS;
         track.points.push(message);
+
+        // Backwards compatibility for versions before seq was added
+        const allHaveSeq = track.points.every(point => typeof point.seq === 'number');
+        if (allHaveSeq) {
+            track.points.sort((a, b) => a.seq - b.seq);
+        }
 
         // Truncate to maxTrackPoints points only
         if (track.points.length > maxTrackPoints) track.points.shift();
