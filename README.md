@@ -1,14 +1,15 @@
 ## TODO update video title - Integrate wtih PubNub To Draw on my Face
 # Draw on My Face
-# Draw on My Face
-# Draw on My Face
-# Draw on My Face
-# Draw on My Face
 
 OBS overlay that allows you to draw on my face
 
 
 Based on https://github.com/stephenlb/Multi-User-HTML5-Shared-Canvas
+
+
+## Use in OBS
+
+In OBS, add `?overlay=true` to the end to hide all UI elements.
 
 ## TODOs
  - Get webcam on the darawing appa @KevinMcCallister thank yoU!
