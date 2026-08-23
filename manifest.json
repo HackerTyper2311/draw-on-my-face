@@ -1,20 +1,20 @@
 {
-  "short_name": "Draw on My Face",
-  "name": "Draw on My Face",
-  "start_url": "/draw-on-my-face",
+  "short_name": "DOMF",
+  "name": "Draw on My Face by Stephen Blum",
+  "start_url": ".",
   "icons": [
     {
-      "src": "/icons/favicon-64x64.png",
+      "src": "icons/favicon-64x64.png",
       "sizes": "64x64",
       "type": "image/png"
     },
     {
-      "src": "/icons/favicon-192x192.png",
+      "src": "icons/favicon-192x192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/icons/favicon-512x512.png",
+      "src": "icons/favicon-512x512.png",
       "sizes": "512x512",
       "type": "image/png"
     }
