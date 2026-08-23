@@ -70,6 +70,10 @@
     const urlParams = new URLSearchParams(window.location.search);
     const isOverlayMode = urlParams.get('overlay') === 'true';
 
+    if (isOverlayMode) {
+        body.style.backgroundColor = 'transparent';
+    }
+
     function resizeCanvas() {
       screenWidth = window.innerWidth;
       screenHeight = window.innerHeight;
