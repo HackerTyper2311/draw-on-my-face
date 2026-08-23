@@ -74,6 +74,13 @@
         body.style.backgroundColor = 'transparent';
     }
 
+    function setColor(hex) {
+        activeStyle = hex;
+        document.querySelectorAll('color').forEach(color => {
+            color.style.borderColor = color.getAttribute('hex') === hex ? '#FFFFFF' : '#000000';
+        });
+    }
+
     function resizeCanvas() {
       screenWidth = window.innerWidth;
       screenHeight = window.innerHeight;
