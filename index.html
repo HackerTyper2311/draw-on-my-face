@@ -49,6 +49,7 @@
     const pointLifetimeMS = 5000;
     const userId = `userId-${ crypto.randomUUID() }`; // Thank you Bettlee 🎉
     const defaultStyle = "#FF00FF";
+    let activeStyle = "#BA0C2F";
 
     let screenWidth = 0;
     let screenHeight = 0;
@@ -65,6 +66,9 @@
     const canvas = document.getElementById('canvas');
     const context = canvas.getContext('2d');
     const body = document.querySelector('body');
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const isOverlayMode = urlParams.get('overlay') === 'true';
 
     function resizeCanvas() {
       screenWidth = window.innerWidth;
@@ -103,6 +107,7 @@
             x: pendingPoint.x,
             y: pendingPoint.y,
             userId: userId,
+            style: activeStyle,
         };
         pendingPoint = null;
 
