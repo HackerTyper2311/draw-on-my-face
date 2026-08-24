@@ -17,9 +17,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="App Name" />
+    <meta name="apple-mobile-web-app-title" content="Draw on My Face" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="theme-color" content="#121212" />
+    <meta name="theme-color" content="#BA0C2F" />
+    <title>Draw on My Face by Stephen Blum</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/x-icon" href="icons/favicon-64x64.png">
+    <link rel="apple-touch-icon" href="icons/favicon-192x192.png">
 </head>
 <style>
     html, body {
@@ -50,6 +54,8 @@
     const pointLifetimeMS = 5000;
     const userId = `userId-${ crypto.randomUUID() }`; // Thank you Bettlee 🎉
     const defaultStyle = "#FF00FF";
+    let activeStyle = defaultStyle;
+    var sendSeq = 0;
 
     let screenWidth = 0;
     let screenHeight = 0;
@@ -66,6 +72,17 @@
     const canvas = document.getElementById('canvas');
     const context = canvas.getContext('2d');
     const body = document.querySelector('body');
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const isOverlayMode = urlParams.get('overlay') === 'true';
+
+    if (isOverlayMode) {
+        body.style.backgroundColor = 'transparent';
+    }
+
+    function setColor(hex) {
+        activeStyle = hex;
+    }
 
     function resizeCanvas() {
       screenWidth = window.innerWidth;
@@ -99,11 +116,14 @@
 
     function publishPendingPoint() {
         if (!pendingPoint) return;
+        sendSeq++;
 
         const message = {
             x: pendingPoint.x,
             y: pendingPoint.y,
             userId: userId,
+            style: activeStyle,
+            seq: sendSeq,
         };
         pendingPoint = null;
 
@@ -128,6 +148,12 @@
         const track = userTracks[id];
         message.expires = Date.now() + pointLifetimeMS;
         track.points.push(message);
+
+        // Backwards compatibility for versions before seq was added
+        const allHaveSeq = track.points.every(point => typeof point.seq === 'number');
+        if (allHaveSeq) {
+            track.points.sort((a, b) => a.seq - b.seq);
+        }
 
         // Truncate to maxTrackPoints points only
         if (track.points.length > maxTrackPoints) track.points.shift();
@@ -205,4 +231,9 @@
         } );
     }
     requestAnimationFrame(render);
+
+    // For Web Manifest
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js');
+    }
 })();</script>
