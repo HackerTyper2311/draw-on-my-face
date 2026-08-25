@@ -80,7 +80,7 @@
     const pubnub = PubNub({});
     const channels = {
       coords   : 'coords',
-      webcam   : 'webcam',
+      sticker  : 'sticker',
       commands : 'commands',
     };
 
@@ -113,21 +113,48 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // Sticker Clicker
-    window.addEventListener('click', (event) => {
-        let x = event.clientX;
-        let y = event.clientY;
-        event.preventDefault();
-        console.log('click');
+    function stickerReceiver(message) {
+        const x = message.x * screenWidth;
+        const y = message.y * screenHeight;
         const div = document.createElement('div');
         div.classList.add('sticker');
-        div.style.top = `${y}px`;
-        div.style.left = `${x}px`;
-        div.innerHTML = '♥️';
+        div.style.top = `${y-20}px`;
+        div.style.left = `${x-20}px`;
+        div.innerHTML = '&#10084;&#65039;';
         div.setAttribute('time', +new Date());
         document.body.appendChild(div);
+    }
+
+    // Recieve Stickers
+    pubnub.subscribe({
+        channel: channels.sticker,
+        messages: stickerReceiver,
+    });
+
+    // Sticker Clicker
+    window.addEventListener('click', (event) => {
+        const message = {
+            x: event.clientX / screenWidth,
+            y: event.clientY / screenHeight,
+            userId: userId,
+        };
+        pubnub.publish({
+            channel: channels.sticker,
+            message: message,
+        });
+
+        event.preventDefault();
         return false;
     });
+    setInterval( () => {
+        document.querySelectorAll('.sticker').forEach( div => {
+            let now = +new Date();
+            let drawTime = +div.getAttribute('time');
+            if (now > drawTime + 3000) {
+                body.removeChild(div);
+            }
+        } );
+    }, 1000 );
     // Clear screen of Stickers
 
     // Prevent mobile scroll
