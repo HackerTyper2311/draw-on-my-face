@@ -2,8 +2,8 @@
 
   const PIXEL_CHANNEL       = 'pixels';
   const DEFAULT_PIXEL_SIZE  = 0.008;
-  const DEFAULT_LIFETIME_MS = 4000;
-  const MAX_LIVE_PIXELS     = 4000;
+  const DEFAULT_LIFETIME_MS = 15000;
+  const MAX_LIVE_PIXELS     = 15000;
   const FLUSH_INTERVAL_MS   = 80;
   const MAX_BATCH_SIZE      = 200;
 
