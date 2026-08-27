@@ -2,10 +2,10 @@
 
   const PIXEL_CHANNEL       = 'pixels';
   const DEFAULT_PIXEL_SIZE  = 0.008;
-  const DEFAULT_LIFETIME_MS = 15000;
-  const MAX_LIVE_PIXELS     = 15000;
-  const FLUSH_INTERVAL_MS   = 80;
-  const MAX_BATCH_SIZE      = 200;
+  const DEFAULT_LIFETIME_MS = 150000;
+  const MAX_LIVE_PIXELS     = 150000;
+  const FLUSH_INTERVAL_MS   = 190;
+  const MAX_BATCH_SIZE      = 2000;
 
   let pixelSeq = 0;
   let pendingPixels = [];
