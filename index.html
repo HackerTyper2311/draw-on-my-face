@@ -68,25 +68,21 @@
     "use strict";
 
     // =========================================================
-    // CONFIG
+    // CONFIGURATION
     // =========================================================
 
     const PUBNUB_SUBSCRIBE_KEY = "demo";
     const PUBNUB_CHANNEL = "pixels";
 
-    /*
-     * clear_client.py automatically replaces this value.
-     *
-     * DO NOT put the private key here.
-     */
-    const PUBLIC_KEY_B64 = "zB+OixXEDO2B8Mj1bZAFrY8s6AArNBFVbUDSPRyPN7o=";
+    const PUBLIC_KEY_B64 =
+        "zB+OixXEDO2B8Mj1bZAFrY8s6AArNBFVbUDSPRyPN7o=";
 
 
     // =========================================================
-    // SETTINGS
+    // SECURITY
     // =========================================================
 
-    const MAX_COMMAND_AGE_MS = 30 * 1000;
+    const MAX_COMMAND_AGE_MS = 30000;
 
     const usedNonces = new Set();
 
@@ -101,12 +97,10 @@
     let ctx = null;
 
 
-    function getCanvas() {
-        if (canvas && ctx) {
-            return true;
-        }
+    function acquireCanvas() {
 
-        canvas = document.getElementById("canvas");
+        canvas =
+            document.getElementById("canvas");
 
         if (!canvas) {
             console.error(
@@ -115,11 +109,12 @@
             return false;
         }
 
-        ctx = canvas.getContext("2d");
+        ctx =
+            canvas.getContext("2d");
 
         if (!ctx) {
             console.error(
-                "[CLEAR] Could not get 2D context."
+                "[CLEAR] Could not get canvas context."
             );
             return false;
         }
@@ -136,8 +131,11 @@
 
 
     function clearCanvas() {
-        if (!getCanvas()) {
-            return;
+
+        if (!canvas || !ctx) {
+            if (!acquireCanvas()) {
+                return;
+            }
         }
 
         ctx.clearRect(
@@ -150,10 +148,11 @@
 
 
     // =========================================================
-    // BLACKOUT STATE
+    // BLACKOUT
     // =========================================================
 
     function enableBlackout() {
+
         blackoutActive = true;
 
         clearCanvas();
@@ -165,6 +164,7 @@
 
 
     function disableBlackout() {
+
         blackoutActive = false;
 
         console.log(
@@ -177,19 +177,13 @@
     // CANVAS PROTECTION
     // =========================================================
 
-    /*
-     * Do not trust the drawer.
-     *
-     * During blackout, normal CanvasRenderingContext2D drawing
-     * operations are blocked.
-     */
+    function protectCanvas() {
 
-    function installCanvasProtection() {
-        if (!getCanvas()) {
+        if (!ctx) {
             return;
         }
 
-        const blockedMethods = [
+        const methods = [
             "fillRect",
             "strokeRect",
             "fill",
@@ -197,38 +191,36 @@
             "drawImage",
             "putImageData",
             "fillText",
-            "strokeText",
-            "clearRect"
+            "strokeText"
         ];
 
-        for (const method of blockedMethods) {
-            const original = ctx[method];
+
+        for (const name of methods) {
+
+            const original =
+                ctx[name];
 
             if (
-                typeof original !== "function"
+                typeof original !==
+                "function"
             ) {
                 continue;
             }
 
-            ctx[method] = function (...args) {
 
-                /*
-                 * clearRect is always allowed so the clear
-                 * command can wipe the canvas.
-                 */
-                if (
-                    method !== "clearRect" &&
-                    blackoutActive
-                ) {
+            ctx[name] = function () {
+
+                if (blackoutActive) {
                     return;
                 }
 
                 return original.apply(
                     this,
-                    args
+                    arguments
                 );
             };
         }
+
 
         console.log(
             "[CLEAR] Canvas protection installed."
@@ -241,33 +233,25 @@
     // =========================================================
 
     function base64ToBytes(value) {
-        try {
-            const binary = atob(value);
 
-            const bytes =
-                new Uint8Array(
-                    binary.length
-                );
+        const binary =
+            atob(value);
 
-            for (
-                let i = 0;
-                i < binary.length;
-                i++
-            ) {
-                bytes[i] =
-                    binary.charCodeAt(i);
-            }
-
-            return bytes;
-
-        } catch (error) {
-            console.error(
-                "[CLEAR] Invalid base64:",
-                error
+        const bytes =
+            new Uint8Array(
+                binary.length
             );
 
-            return null;
+        for (
+            let i = 0;
+            i < binary.length;
+            i++
+        ) {
+            bytes[i] =
+                binary.charCodeAt(i);
         }
+
+        return bytes;
     }
 
 
@@ -280,6 +264,7 @@
         timestamp,
         nonce
     ) {
+
         return (
             type +
             "|" +
@@ -291,10 +276,10 @@
 
 
     // =========================================================
-    // ED25519 VERIFICATION
+    // VERIFY ED25519
     // =========================================================
 
-    async function verifySignature(message) {
+    async function verifyCommand(message) {
 
         if (
             typeof message.timestamp !==
@@ -303,12 +288,14 @@
             return false;
         }
 
+
         if (
             typeof message.nonce !==
             "string"
         ) {
             return false;
         }
+
 
         if (
             typeof message.signature !==
@@ -329,8 +316,9 @@
             age >
             MAX_COMMAND_AGE_MS
         ) {
+
             console.warn(
-                "[SECURITY] Expired command rejected."
+                "[SECURITY] Expired command."
             );
 
             return false;
@@ -342,6 +330,7 @@
                 message.nonce
             )
         ) {
+
             console.warn(
                 "[SECURITY] Replay rejected."
             );
@@ -350,40 +339,33 @@
         }
 
 
-        const publicKeyBytes =
-            base64ToBytes(
-                PUBLIC_KEY_B64
-            );
-
-        const signatureBytes =
-            base64ToBytes(
-                message.signature
-            );
-
-
-        if (
-            !publicKeyBytes ||
-            !signatureBytes
-        ) {
-            return false;
-        }
-
-
-        const payload =
-            createPayload(
-                message.type,
-                message.timestamp,
-                message.nonce
-            );
-
-
-        const payloadBytes =
-            new TextEncoder().encode(
-                payload
-            );
-
-
         try {
+
+            const publicKeyBytes =
+                base64ToBytes(
+                    PUBLIC_KEY_B64
+                );
+
+
+            const signatureBytes =
+                base64ToBytes(
+                    message.signature
+                );
+
+
+            const payload =
+                createPayload(
+                    message.type,
+                    message.timestamp,
+                    message.nonce
+                );
+
+
+            const payloadBytes =
+                new TextEncoder().encode(
+                    payload
+                );
+
 
             const publicKey =
                 await crypto.subtle.importKey(
@@ -411,13 +393,16 @@
 
 
             if (valid) {
+
                 usedNonces.add(
                     message.nonce
                 );
 
                 if (
-                    usedNonces.size > 1000
+                    usedNonces.size >
+                    1000
                 ) {
+
                     const first =
                         usedNonces
                             .values()
@@ -436,7 +421,7 @@
         } catch (error) {
 
             console.error(
-                "[SECURITY] Ed25519 verification failed:",
+                "[SECURITY] Verification error:",
                 error
             );
 
@@ -449,11 +434,12 @@
     // PUBNUB MESSAGE
     // =========================================================
 
-    async function processMessage(message) {
+    async function handleMessage(message) {
 
         if (!message) {
             return;
         }
+
 
         if (
             message.type !== "clear" &&
@@ -462,6 +448,7 @@
             return;
         }
 
+
         console.log(
             "[CLEAR] Received:",
             message.type
@@ -469,12 +456,13 @@
 
 
         const valid =
-            await verifySignature(
+            await verifyCommand(
                 message
             );
 
 
         if (!valid) {
+
             console.warn(
                 "[SECURITY] Invalid command rejected."
             );
@@ -486,7 +474,9 @@
         if (
             message.type === "clear"
         ) {
+
             enableBlackout();
+
             return;
         }
 
@@ -494,7 +484,9 @@
         if (
             message.type === "release"
         ) {
+
             disableBlackout();
+
         }
     }
 
@@ -509,21 +501,9 @@
             typeof window.PubNub !==
             "function"
         ) {
+
             console.error(
-                "[PUBNUB] PubNub SDK not loaded."
-            );
-
-            return;
-        }
-
-
-        if (
-            !PUBNUB_SUBSCRIBE_KEY ||
-            PUBNUB_SUBSCRIBE_KEY ===
-            "YOUR_SUBSCRIBE_KEY"
-        ) {
-            console.error(
-                "[PUBNUB] Subscribe key is not configured."
+                "[PUBNUB] PubNub SDK not found."
             );
 
             return;
@@ -532,19 +512,27 @@
 
         const pubnub =
             new window.PubNub({
+
                 subscribeKey:
                     PUBNUB_SUBSCRIBE_KEY,
 
                 userId:
-                    "draw-on-my-face-clear-client"
+                    "draw-on-my-face-clear"
+
             });
 
+
+        // -----------------------------------------------------
+        // IMPORTANT:
+        // This is the API used by the PubNub SDK loaded by the
+        // original Draw On My Face project.
+        // -----------------------------------------------------
 
         pubnub.addListener({
 
             message(event) {
 
-                processMessage(
+                handleMessage(
                     event.message
                 );
 
@@ -563,9 +551,11 @@
 
 
         pubnub.subscribe({
+
             channels: [
                 PUBNUB_CHANNEL
             ]
+
         });
 
 
@@ -581,14 +571,16 @@
 
 
     // =========================================================
-    // INITIALIZATION
+    // INITIALIZE
     // =========================================================
 
     function initialize() {
 
-        getCanvas();
+        if (!acquireCanvas()) {
+            return;
+        }
 
-        installCanvasProtection();
+        protectCanvas();
 
         initializePubNub();
     }
@@ -615,7 +607,7 @@
 
 
     // =========================================================
-    // MINIMAL API
+    // PUBLIC API
     // =========================================================
 
     window.DrawOnMyFace = {
