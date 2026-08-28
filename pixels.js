@@ -744,60 +744,46 @@
   // SUBSCRIBE
   // ============================================================
 
-  function subscribe() {
+function subscribe() {
 
-    if (
-      !initializePubNub()
-    ) {
-
-      return;
-    }
-
-
-    if (
-      subscribed
-    ) {
-
-      return;
-    }
-
-
-    log(
-      "Subscribing to:",
-      PUBNUB_CHANNEL
-    );
-
-
-    /*
-     * IMPORTANT:
-     *
-     * This is the API supported by the PubNub version
-     * currently used by Draw On My Face.
-     */
-    pubnub.subscribe({
-
-      channel:
-        PUBNUB_CHANNEL,
-
-      message:
-        processMessage
-
-    });
-
-
-    subscribed =
-      true;
-
-
-    log(
-      "Signed clear listener started."
-    );
-
-    log(
-      "Channel:",
-      PUBNUB_CHANNEL
-    );
+  if (!initializePubNub()) {
+    return;
   }
+
+  if (subscribed) {
+    return;
+  }
+
+  log(
+    "Subscribing to:",
+    PUBNUB_CHANNEL
+  );
+
+  pubnub.subscribe({
+    channel: PUBNUB_CHANNEL,
+
+    message: function(message) {
+
+      log(
+        "RAW PUBNUB MESSAGE:",
+        message
+      );
+
+      processMessage(message);
+    }
+  });
+
+  subscribed = true;
+
+  log(
+    "Signed clear listener started."
+  );
+
+  log(
+    "Channel:",
+    PUBNUB_CHANNEL
+  );
+}
 
 
   // ============================================================
