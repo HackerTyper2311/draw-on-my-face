@@ -1,655 +1,959 @@
 (() => {
+  "use strict";
 
-  const PIXEL_CHANNEL       = 'pixels';
-  const DEFAULT_PIXEL_SIZE  = 0.008;
-  const DEFAULT_LIFETIME_MS = 150000;
-  const MAX_LIVE_PIXELS     = 150000;
-  const FLUSH_INTERVAL_MS   = 190;
-  const MAX_BATCH_SIZE      = 2000;
+  /*
+   * ============================================================
+   * Draw On My Face
+   * SIGNED CLEAR-ONLY CLIENT
+   * ============================================================
+   *
+   * This replacement intentionally does NOT contain the
+   * original drawing/pixel features.
+   *
+   * It only:
+   *
+   *   - connects to PubNub
+   *   - subscribes to "pixels"
+   *   - accepts signed clear commands
+   *   - verifies Ed25519 signatures
+   *   - clears the canvas after successful verification
+   *
+   * ============================================================
+   */
 
-  let pixelSeq = 0;
-  let pendingPixels = [];
-  let livePixels = [];
-  let pixelDrawEnabled = false;
+
+  // ============================================================
+  // CONFIGURATION
+  // ============================================================
+
+  /*
+   * clear_client.py automatically replaces this value with
+   * your configured PubNub Subscribe Key.
+   */
+  const PUBNUB_SUBSCRIBE_KEY =
+    "demo";
+
+  /*
+   * Draw On My Face channel.
+   */
+  const PUBNUB_CHANNEL =
+    "pixels";
+
+  /*
+   * Ed25519 PUBLIC KEY.
+   *
+   * clear_client.py automatically replaces this value.
+   *
+   * NEVER put the private key in this file.
+   */
+  const PUBLIC_KEY_B64 =
+    "zB+OixXEDO2B8Mj1bZAFrY8s6AArNBFVbUDSPRyPN7o=";
+
+
+  // ============================================================
+  // SECURITY
+  // ============================================================
+
+  /*
+   * Commands older than this are rejected.
+   *
+   * This prevents old valid commands from being replayed
+   * much later.
+   */
+  const MAX_COMMAND_AGE_MS =
+    30 * 1000;
+
+
+  /*
+   * Nonces already processed by this page.
+   */
+  const usedNonces =
+    new Set();
+
+
+  // ============================================================
+  // STATE
+  // ============================================================
 
   let pubnub = null;
+
   let canvas = null;
+
   let context = null;
+
   let subscribed = false;
 
 
   // ============================================================
-  // REQUEST ANIMATION FRAME HOOK
+  // LOGGING
   // ============================================================
 
-  const nativeRAF =
-    window.requestAnimationFrame.bind(window);
+  function log(...args) {
 
-  window.requestAnimationFrame = function(callback) {
+    console.log(
+      "[DrawOnMyFace]",
+      ...args
+    );
 
-    return nativeRAF((timestamp) => {
-
-      callback(timestamp);
-
-      afterFrame();
-    });
-  };
+  }
 
 
-  // ============================================================
-  // GET CANVAS + PUBNUB
-  // ============================================================
+  function warn(...args) {
 
-  function tryAcquireRefs() {
+    console.warn(
+      "[DrawOnMyFace]",
+      ...args
+    );
 
-    if (!canvas) {
-
-      const el =
-        document.getElementById('canvas');
-
-      if (el) {
-
-        canvas = el;
-
-        context =
-          el.getContext('2d');
-      }
-    }
+  }
 
 
-    if (
-      !pubnub &&
-      typeof window.PubNub === 'function'
-    ) {
+  function error(...args) {
 
-      pubnub =
-        window.PubNub({});
-    }
+    console.error(
+      "[DrawOnMyFace]",
+      ...args
+    );
 
-
-    if (
-      pubnub &&
-      !subscribed
-    ) {
-
-      pubnub.subscribe({
-
-        channel:
-          PIXEL_CHANNEL,
-
-        messages:
-          onPixelBatch,
-      });
-
-      subscribed = true;
-
-      console.log(
-        '[DrawOnMyFace] subscribed:',
-        PIXEL_CHANNEL
-      );
-    }
   }
 
 
   // ============================================================
-  // RECEIVE PUBNUB MESSAGE
+  // CANVAS
   // ============================================================
 
-  function onPixelBatch(message) {
-
-    if (!message) {
-      return;
-    }
-
-
-    const userId =
-      typeof message.userId === 'string'
-        ? message.userId
-        : 'unknown';
-
-
-    // ==========================================================
-    // REAL CLEAR COMMAND
-    // ==========================================================
-
-    if (message.clear === true) {
-
-      clearUserPixels(userId);
-
-      return;
-    }
-
-
-    // ==========================================================
-    // NORMAL PIXEL MESSAGE
-    // ==========================================================
-
-    if (!Array.isArray(message.pixels)) {
-      return;
-    }
-
-
-    const now =
-      Date.now();
-
-
-    const size =
-      typeof message.size === 'number'
-        ? message.size
-        : DEFAULT_PIXEL_SIZE;
-
-
-    const lifetimeMs =
-      typeof message.fadeMs === 'number'
-        ? message.fadeMs
-        : DEFAULT_LIFETIME_MS;
-
-
-    message.pixels.forEach(p => {
-
-      if (
-        typeof p.x !== 'number' ||
-        typeof p.y !== 'number'
-      ) {
-        return;
-      }
-
-
-      if (
-        typeof p.color !== 'string'
-      ) {
-        return;
-      }
-
-
-      livePixels.push({
-
-        x: p.x,
-
-        y: p.y,
-
-        color: p.color,
-
-        size:
-          typeof p.size === 'number'
-            ? p.size
-            : size,
-
-        userId:
-
-          typeof message.userId === 'string'
-            ? message.userId
-            : 'unknown',
-
-        expiresAt:
-          now + lifetimeMs,
-      });
-    });
-
-
-    // Keep memory bounded.
+  function acquireCanvas() {
 
     if (
-      livePixels.length >
-      MAX_LIVE_PIXELS
+      canvas &&
+      context
     ) {
 
-      livePixels.splice(
-        0,
-        livePixels.length -
-          MAX_LIVE_PIXELS
-      );
+      return true;
+
     }
+
+
+    const element =
+      document.getElementById(
+        "canvas"
+      );
+
+
+    if (!element) {
+
+      warn(
+        "Canvas element not found."
+      );
+
+      return false;
+
+    }
+
+
+    canvas =
+      element;
+
+
+    context =
+      canvas.getContext(
+        "2d"
+      );
+
+
+    if (!context) {
+
+      error(
+        "Could not obtain 2D canvas context."
+      );
+
+      return false;
+
+    }
+
+
+    log(
+      "Canvas acquired:",
+      canvas.width,
+      "x",
+      canvas.height
+    );
+
+
+    return true;
+
   }
 
 
   // ============================================================
-  // CLEAR ALL PIXELS FROM ONE USER
+  // CLEAR CANVAS
   // ============================================================
 
-  function clearUserPixels(userId) {
+  function clearCanvas() {
 
-    if (!canvas || !context) {
+    if (
+      !acquireCanvas()
+    ) {
 
-      // Still remove them from memory.
-
-      livePixels =
-        livePixels.filter(
-          p => p.userId !== userId
-        );
-
-      return;
-    }
-
-
-    /*
-     * Because the canvas is an immediate-mode drawing surface,
-     * we cannot safely remove an old rectangle from underneath
-     * another user's drawing with clearRect().
-     *
-     * Instead:
-     *
-     * 1. Remove that user's pixels from livePixels.
-     * 2. Rebuild the canvas from the remaining pixels.
-     *
-     * This preserves other users' pixels.
-     */
-
-    livePixels =
-      livePixels.filter(
-        p => p.userId !== userId
+      warn(
+        "Canvas is not available."
       );
 
-
-    redrawCanvas();
-  }
-
-
-  // ============================================================
-  // REDRAW EVERYTHING THAT IS STILL LIVE
-  // ============================================================
-
-  function redrawCanvas() {
-
-    if (!canvas || !context) {
       return;
+
     }
 
-
-    const width =
-      canvas.width;
-
-    const height =
-      canvas.height;
-
-
-    // Clear the actual drawing buffer.
 
     context.clearRect(
       0,
       0,
-      width,
-      height
+      canvas.width,
+      canvas.height
     );
 
 
-    const screenWidth =
-      canvas.clientWidth ||
-      window.innerWidth;
+    log(
+      "Canvas cleared."
+    );
 
-    const screenHeight =
-      canvas.clientHeight ||
-      window.innerHeight;
-
-
-    /*
-     * If the canvas has a different internal resolution
-     * from its CSS size, scale drawing correctly.
-     */
-
-    const scaleX =
-      width / screenWidth;
-
-    const scaleY =
-      height / screenHeight;
-
-
-    livePixels.forEach(p => {
-
-      const px =
-        p.x * screenWidth;
-
-      const py =
-        p.y * screenHeight;
-
-      const size =
-        p.size * screenWidth;
-
-
-      context.fillStyle =
-        p.color;
-
-
-      context.fillRect(
-
-        (px - size / 2) * scaleX,
-
-        (py - size / 2) * scaleY,
-
-        size * scaleX,
-
-        size * scaleY
-      );
-    });
   }
 
 
   // ============================================================
-  // QUEUE LOCAL PIXEL
+  // BASE64 DECODER
   // ============================================================
 
-  function queuePixel(
-    x,
-    y,
-    color,
-    opts
+  function base64ToBytes(
+    value
   ) {
 
-    pendingPixels.push({
+    try {
 
-      x: x,
-
-      y: y,
-
-      color: color,
-
-      size:
-        opts &&
-        typeof opts.size === 'number'
-          ? opts.size
-          : undefined,
-    });
+      const binary =
+        atob(value);
 
 
-    if (
-      pendingPixels.length >=
-      MAX_BATCH_SIZE
-    ) {
+      const bytes =
+        new Uint8Array(
+          binary.length
+        );
 
-      flushPixels();
+
+      for (
+        let i = 0;
+        i < binary.length;
+        i++
+      ) {
+
+        bytes[i] =
+          binary.charCodeAt(i);
+
+      }
+
+
+      return bytes;
+
+    } catch (err) {
+
+      error(
+        "Invalid Base64 data:",
+        err
+      );
+
+      return null;
+
     }
+
   }
 
 
   // ============================================================
-  // FLUSH LOCAL PIXELS
+  // SIGNED PAYLOAD
   // ============================================================
 
-  function flushPixels() {
+  /*
+   * clear_client.py signs EXACTLY:
+   *
+   * clear|timestamp|nonce
+   *
+   * JavaScript must create the exact same byte sequence.
+   */
+  function createSignedPayload(
+    timestamp,
+    nonce
+  ) {
 
-    if (
-      pendingPixels.length === 0
-    ) {
-      return;
-    }
+    return (
+      "clear"
+      + "|"
+      + timestamp
+      + "|"
+      + nonce
+    );
 
-
-    if (!pubnub) {
-      return;
-    }
-
-
-    pixelSeq++;
-
-
-    const batch =
-      pendingPixels;
-
-
-    pendingPixels = [];
-
-
-    pubnub.publish({
-
-      channel:
-        PIXEL_CHANNEL,
-
-      message: {
-
-        userId:
-          currentUserId(),
-
-        seq:
-          pixelSeq,
-
-        size:
-          DEFAULT_PIXEL_SIZE,
-
-        fadeMs:
-          DEFAULT_LIFETIME_MS,
-
-        pixels:
-          batch,
-      },
-    });
   }
 
 
   // ============================================================
-  // PERIODIC FLUSH
+  // ED25519 VERIFICATION
   // ============================================================
 
-  setInterval(
-    flushPixels,
-    FLUSH_INTERVAL_MS
-  );
+  async function verifySignature(
+    timestamp,
+    nonce,
+    signatureB64
+  ) {
+
+    try {
+
+      if (
+        !window.crypto ||
+        !window.crypto.subtle
+      ) {
+
+        error(
+          "Web Crypto API is unavailable."
+        );
+
+        return false;
+
+      }
 
 
-  // ============================================================
-  // EXPIRE PIXELS
-  // ============================================================
+      // --------------------------------------------------------
+      // PUBLIC KEY
+      // --------------------------------------------------------
 
-  function expirePixels() {
+      const publicKeyBytes =
+        base64ToBytes(
+          PUBLIC_KEY_B64
+        );
 
-    if (
-      livePixels.length === 0
-    ) {
-      return;
+
+      if (!publicKeyBytes) {
+
+        return false;
+
+      }
+
+
+      if (
+        publicKeyBytes.length !==
+        32
+      ) {
+
+        error(
+          "Invalid Ed25519 public key length:",
+          publicKeyBytes.length
+        );
+
+        return false;
+
+      }
+
+
+      // --------------------------------------------------------
+      // SIGNATURE
+      // --------------------------------------------------------
+
+      const signatureBytes =
+        base64ToBytes(
+          signatureB64
+        );
+
+
+      if (!signatureBytes) {
+
+        return false;
+
+      }
+
+
+      if (
+        signatureBytes.length !==
+        64
+      ) {
+
+        error(
+          "Invalid Ed25519 signature length:",
+          signatureBytes.length
+        );
+
+        return false;
+
+      }
+
+
+      // --------------------------------------------------------
+      // PAYLOAD
+      // --------------------------------------------------------
+
+      const payload =
+        createSignedPayload(
+          timestamp,
+          nonce
+        );
+
+
+      log(
+        "Verifying payload:",
+        payload
+      );
+
+
+      const payloadBytes =
+        new TextEncoder().encode(
+          payload
+        );
+
+
+      // --------------------------------------------------------
+      // IMPORT PUBLIC KEY
+      // --------------------------------------------------------
+
+      const publicKey =
+        await crypto.subtle.importKey(
+
+          "raw",
+
+          publicKeyBytes,
+
+          {
+            name:
+              "Ed25519"
+          },
+
+          false,
+
+          [
+            "verify"
+          ]
+
+        );
+
+
+      // --------------------------------------------------------
+      // VERIFY
+      // --------------------------------------------------------
+
+      const valid =
+        await crypto.subtle.verify(
+
+          {
+            name:
+              "Ed25519"
+          },
+
+          publicKey,
+
+          signatureBytes,
+
+          payloadBytes
+
+        );
+
+
+      return valid;
+
+    } catch (err) {
+
+      error(
+        "Ed25519 verification failed:",
+        err
+      );
+
+      return false;
+
     }
 
+  }
+
+
+  // ============================================================
+  // PROCESS PUBNUB MESSAGE
+  // ============================================================
+
+  async function processMessage(
+    message
+  ) {
+
+    log(
+      "RECEIVED:",
+      message
+    );
+
+
+    if (!message) {
+
+      warn(
+        "Ignored empty message."
+      );
+
+      return;
+
+    }
+
+
+    // ----------------------------------------------------------
+    // ONLY ACCEPT CLEAR
+    // ----------------------------------------------------------
+
+    if (
+      message.type !==
+      "clear"
+    ) {
+
+      log(
+        "Ignored non-clear message."
+      );
+
+      return;
+
+    }
+
+
+    log(
+      "Clear command received."
+    );
+
+
+    // ----------------------------------------------------------
+    // TIMESTAMP
+    // ----------------------------------------------------------
+
+    if (
+      typeof message.timestamp !==
+      "number"
+    ) {
+
+      warn(
+        "Rejected: invalid timestamp."
+      );
+
+      return;
+
+    }
+
+
+    // ----------------------------------------------------------
+    // NONCE
+    // ----------------------------------------------------------
+
+    if (
+      typeof message.nonce !==
+      "string"
+    ) {
+
+      warn(
+        "Rejected: invalid nonce."
+      );
+
+      return;
+
+    }
+
+
+    if (
+      message.nonce.length < 16
+    ) {
+
+      warn(
+        "Rejected: nonce is too short."
+      );
+
+      return;
+
+    }
+
+
+    // ----------------------------------------------------------
+    // SIGNATURE
+    // ----------------------------------------------------------
+
+    if (
+      typeof message.signature !==
+      "string"
+    ) {
+
+      warn(
+        "Rejected: missing signature."
+      );
+
+      return;
+
+    }
+
+
+    // ----------------------------------------------------------
+    // TIMESTAMP PROTECTION
+    // ----------------------------------------------------------
 
     const now =
       Date.now();
 
 
-    const before =
-      livePixels.length;
-
-
-    livePixels =
-      livePixels.filter(
-        p => p.expiresAt > now
+    const age =
+      Math.abs(
+        now -
+        message.timestamp
       );
 
 
-    // If something expired, rebuild the canvas.
-
-    if (
-      livePixels.length !== before
-    ) {
-
-      redrawCanvas();
-    }
-  }
-
-
-  // ============================================================
-  // CURRENT USER ID
-  // ============================================================
-
-  function currentUserId() {
-
-    return (
-      window.userId ||
-      'pixels-' + pixelSeq
+    log(
+      "Command age:",
+      age,
+      "ms"
     );
-  }
-
-
-  // ============================================================
-  // CURRENT DRAW STYLE
-  // ============================================================
-
-  function currentStyle() {
-
-    return (
-      window.activeStyle ||
-      '#FF00FF'
-    );
-  }
-
-
-  // ============================================================
-  // FRAME
-  // ============================================================
-
-  function afterFrame() {
-
-    tryAcquireRefs();
 
 
     if (
-      !context ||
-      !canvas
+      age >
+      MAX_COMMAND_AGE_MS
     ) {
+
+      warn(
+        "Rejected: command expired."
+      );
+
       return;
+
     }
 
 
-    expirePixels();
-  }
+    // ----------------------------------------------------------
+    // REPLAY PROTECTION
+    // ----------------------------------------------------------
 
+    if (
+      usedNonces.has(
+        message.nonce
+      )
+    ) {
 
-  // ============================================================
-  // PIXEL DRAW MODE
-  // ============================================================
+      warn(
+        "Rejected: nonce already used."
+      );
 
-  function setPixelMode(enabled) {
-
-    pixelDrawEnabled =
-      !!enabled;
-  }
-
-
-  // ============================================================
-  // POINTER DRAWING
-  // ============================================================
-
-  function handlePointerEvent(event) {
-
-    if (!pixelDrawEnabled) {
       return;
+
+    }
+
+
+    // ----------------------------------------------------------
+    // CRYPTOGRAPHIC VERIFICATION
+    // ----------------------------------------------------------
+
+    log(
+      "Checking Ed25519 signature..."
+    );
+
+
+    const valid =
+      await verifySignature(
+
+        message.timestamp,
+
+        message.nonce,
+
+        message.signature
+
+      );
+
+
+    if (!valid) {
+
+      warn(
+        "Rejected: INVALID SIGNATURE."
+      );
+
+      return;
+
+    }
+
+
+    // ----------------------------------------------------------
+    // STORE NONCE
+    // ----------------------------------------------------------
+
+    usedNonces.add(
+      message.nonce
+    );
+
+
+    /*
+     * Prevent unlimited memory growth.
+     */
+    if (
+      usedNonces.size >
+      1000
+    ) {
+
+      const iterator =
+        usedNonces.values();
+
+
+      const oldest =
+        iterator.next().value;
+
+
+      usedNonces.delete(
+        oldest
+      );
+
+    }
+
+
+    // ----------------------------------------------------------
+    // VALID COMMAND
+    // ----------------------------------------------------------
+
+    log(
+      "VALID SIGNED CLEAR COMMAND."
+    );
+
+
+    clearCanvas();
+
+  }
+
+
+  // ============================================================
+  // PUBNUB INITIALIZATION
+  // ============================================================
+
+  function initializePubNub() {
+
+    if (pubnub) {
+
+      return true;
+
+    }
+
+
+    // ----------------------------------------------------------
+    // SDK CHECK
+    // ----------------------------------------------------------
+
+    if (
+      typeof window.PubNub !==
+      "function"
+    ) {
+
+      error(
+        "PubNub SDK not found."
+      );
+
+      return false;
+
+    }
+
+
+    // ----------------------------------------------------------
+    // SUBSCRIBE KEY CHECK
+    // ----------------------------------------------------------
+
+    if (
+      !PUBNUB_SUBSCRIBE_KEY ||
+      PUBNUB_SUBSCRIBE_KEY ===
+      "YOUR_SUBSCRIBE_KEY"
+    ) {
+
+      error(
+        "PUBNUB_SUBSCRIBE_KEY is not configured."
+      );
+
+      return false;
+
+    }
+
+
+    // ----------------------------------------------------------
+    // PUBLIC KEY CHECK
+    // ----------------------------------------------------------
+
+    if (
+      !PUBLIC_KEY_B64 ||
+      PUBLIC_KEY_B64 ===
+      "YOUR_PUBLIC_KEY"
+    ) {
+
+      error(
+        "PUBLIC_KEY_B64 is not configured."
+      );
+
+      return false;
+
+    }
+
+
+    /*
+     * Draw On My Face uses the older PubNub SDK.
+     *
+     * Do NOT use:
+     *
+     *     new PubNub(...)
+     *
+     * here.
+     *
+     * The original project initializes it with:
+     *
+     *     PubNub({})
+     */
+    try {
+
+      pubnub =
+        window.PubNub({});
+
+    } catch (err) {
+
+      error(
+        "Could not initialize PubNub:",
+        err
+      );
+
+      pubnub =
+        null;
+
+      return false;
+
+    }
+
+
+    log(
+      "PubNub initialized."
+    );
+
+
+    return true;
+
+  }
+
+
+  // ============================================================
+  // SUBSCRIBE
+  // ============================================================
+
+  function subscribe() {
+
+    if (
+      !initializePubNub()
+    ) {
+
+      return;
+
     }
 
 
     if (
-      event.type === 'pointermove' &&
-      event.buttons !== 1 &&
-      event.pointerType !== 'touch'
+      subscribed
     ) {
+
       return;
+
     }
 
 
-    const screenWidth =
-      (canvas &&
-        canvas.clientWidth) ||
-      window.innerWidth;
-
-
-    const screenHeight =
-      (canvas &&
-        canvas.clientHeight) ||
-      window.innerHeight;
-
-
-    queuePixel(
-
-      event.clientX /
-        screenWidth,
-
-      event.clientY /
-        screenHeight,
-
-      currentStyle()
+    log(
+      "Subscribing to:",
+      PUBNUB_CHANNEL
     );
+
+
+    /*
+     * IMPORTANT:
+     *
+     * The Draw On My Face PubNub SDK expects "messages"
+     * here, not "message".
+     */
+    try {
+
+      pubnub.subscribe({
+
+        channel:
+          PUBNUB_CHANNEL,
+
+        messages:
+          function(message) {
+
+            processMessage(
+              message
+            );
+
+          }
+
+      });
+
+    } catch (err) {
+
+      error(
+        "PubNub subscribe failed:",
+        err
+      );
+
+      return;
+
+    }
+
+
+    subscribed =
+      true;
+
+
+    log(
+      "Signed clear listener started."
+    );
+
+
+    log(
+      "Channel:",
+      PUBNUB_CHANNEL
+    );
+
   }
-
-
-  // ============================================================
-  // POINTER EVENTS
-  // ============================================================
-
-  window.addEventListener(
-    'pointerdown',
-    handlePointerEvent
-  );
-
-
-  window.addEventListener(
-    'pointermove',
-    handlePointerEvent
-  );
 
 
   // ============================================================
   // INITIALIZATION
   // ============================================================
 
-  tryAcquireRefs();
+  function initialize() {
+
+    acquireCanvas();
+
+    subscribe();
+
+  }
+
+
+  // ============================================================
+  // START
+  // ============================================================
+
+  initialize();
 
 
   document.addEventListener(
-    'DOMContentLoaded',
-    tryAcquireRefs
+    "DOMContentLoaded",
+    initialize
   );
 
 
   // ============================================================
-  // PUBLIC API
+  // MINIMAL PUBLIC API
   // ============================================================
 
-  window.DrawOnMyFace =
-    window.DrawOnMyFace || {};
+  /*
+   * Only local clearing is exposed.
+   *
+   * There is deliberately no drawing API and no network
+   * clearing API.
+   */
+  window.DrawOnMyFace = {
 
+    clearLocal:
+      clearCanvas
 
-  window.DrawOnMyFace.queuePixel =
-    queuePixel;
-
-
-  window.DrawOnMyFace.flushPixels =
-    flushPixels;
-
-
-  window.DrawOnMyFace.setPixelMode =
-    setPixelMode;
-
-
-  window.DrawOnMyFace.getLivePixelCount =
-    () => livePixels.length;
-
-
-  window.DrawOnMyFace.clearUserPixels =
-    clearUserPixels;
-
-
-  // ============================================================
-  // PUBLIC CLEAR COMMAND
-  // ============================================================
-
-  window.DrawOnMyFace.clear =
-    function() {
-
-      if (!pubnub) {
-        return;
-      }
-
-
-      pubnub.publish({
-
-        channel:
-          PIXEL_CHANNEL,
-
-        message: {
-
-          userId:
-            currentUserId(),
-
-          clear:
-            true,
-        },
-      });
-    };
+  };
 
 
 })();
