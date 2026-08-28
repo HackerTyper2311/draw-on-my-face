@@ -11,103 +11,133 @@
   let pendingPixels = [];
   let livePixels = [];
   let pixelDrawEnabled = false;
+
   let pubnub = null;
   let canvas = null;
   let context = null;
   let subscribed = false;
 
-  // ------------------------------------------------------------
-  // REQUEST ANIMATION FRAME HOOK
-  // ------------------------------------------------------------
 
-  const nativeRAF = window.requestAnimationFrame.bind(window);
+  // ============================================================
+  // REQUEST ANIMATION FRAME HOOK
+  // ============================================================
+
+  const nativeRAF =
+    window.requestAnimationFrame.bind(window);
 
   window.requestAnimationFrame = function(callback) {
+
     return nativeRAF((timestamp) => {
+
       callback(timestamp);
+
       afterFrame();
     });
   };
 
 
-  // ------------------------------------------------------------
-  // GET CANVAS / PUBNUB
-  // ------------------------------------------------------------
+  // ============================================================
+  // GET CANVAS + PUBNUB
+  // ============================================================
 
   function tryAcquireRefs() {
 
     if (!canvas) {
 
-      const el = document.getElementById('canvas');
+      const el =
+        document.getElementById('canvas');
 
       if (el) {
+
         canvas = el;
-        context = el.getContext('2d');
+
+        context =
+          el.getContext('2d');
       }
     }
 
-    if (!pubnub && typeof window.PubNub === 'function') {
 
-      pubnub = window.PubNub({});
+    if (
+      !pubnub &&
+      typeof window.PubNub === 'function'
+    ) {
+
+      pubnub =
+        window.PubNub({});
     }
 
-    if (pubnub && !subscribed) {
+
+    if (
+      pubnub &&
+      !subscribed
+    ) {
 
       pubnub.subscribe({
-        channel: PIXEL_CHANNEL,
-        messages: onPixelBatch,
+
+        channel:
+          PIXEL_CHANNEL,
+
+        messages:
+          onPixelBatch,
       });
 
       subscribed = true;
 
       console.log(
-        '[DrawOnMyFace] subscribed to',
+        '[DrawOnMyFace] subscribed:',
         PIXEL_CHANNEL
       );
     }
   }
 
 
-  // ------------------------------------------------------------
-  // COLOR HELPERS
-  // ------------------------------------------------------------
-
-  function isTransparentColor(color) {
-
-    if (typeof color !== 'string') {
-      return false;
-    }
-
-    const normalized = color
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, '');
-
-    return (
-      normalized === 'transparent' ||
-      normalized === 'rgba(0,0,0,0)' ||
-      normalized === 'rgba(0,0,0,0.0)' ||
-      normalized === '#00000000'
-    );
-  }
-
-
-  // ------------------------------------------------------------
-  // RECEIVE PIXELS
-  // ------------------------------------------------------------
+  // ============================================================
+  // RECEIVE PUBNUB MESSAGE
+  // ============================================================
 
   function onPixelBatch(message) {
 
-    if (!message || !Array.isArray(message.pixels)) {
+    if (!message) {
       return;
     }
 
-    const now = Date.now();
+
+    const userId =
+      typeof message.userId === 'string'
+        ? message.userId
+        : 'unknown';
+
+
+    // ==========================================================
+    // REAL CLEAR COMMAND
+    // ==========================================================
+
+    if (message.clear === true) {
+
+      clearUserPixels(userId);
+
+      return;
+    }
+
+
+    // ==========================================================
+    // NORMAL PIXEL MESSAGE
+    // ==========================================================
+
+    if (!Array.isArray(message.pixels)) {
+      return;
+    }
+
+
+    const now =
+      Date.now();
+
 
     const size =
       typeof message.size === 'number'
         ? message.size
         : DEFAULT_PIXEL_SIZE;
+
 
     const lifetimeMs =
       typeof message.fadeMs === 'number'
@@ -124,36 +154,18 @@
         return;
       }
 
-      if (typeof p.color !== 'string') {
+
+      if (
+        typeof p.color !== 'string'
+      ) {
         return;
       }
 
-
-      // --------------------------------------------------------
-      // TRANSPARENT PIXEL
-      // --------------------------------------------------------
-
-      if (isTransparentColor(p.color)) {
-
-        clearPixel(
-          p.x,
-          p.y,
-          typeof p.size === 'number'
-            ? p.size
-            : size
-        );
-
-        return;
-      }
-
-
-      // --------------------------------------------------------
-      // NORMAL PIXEL
-      // --------------------------------------------------------
 
       livePixels.push({
 
         x: p.x,
+
         y: p.y,
 
         color: p.color,
@@ -163,36 +175,102 @@
             ? p.size
             : size,
 
-        userId: message.userId,
+        userId:
+
+          typeof message.userId === 'string'
+            ? message.userId
+            : 'unknown',
 
         expiresAt:
           now + lifetimeMs,
       });
-
     });
 
 
-    // Limit memory usage.
+    // Keep memory bounded.
 
-    if (livePixels.length > MAX_LIVE_PIXELS) {
+    if (
+      livePixels.length >
+      MAX_LIVE_PIXELS
+    ) {
 
       livePixels.splice(
         0,
-        livePixels.length - MAX_LIVE_PIXELS
+        livePixels.length -
+          MAX_LIVE_PIXELS
       );
     }
   }
 
 
-  // ------------------------------------------------------------
-  // CLEAR ONE PIXEL
-  // ------------------------------------------------------------
+  // ============================================================
+  // CLEAR ALL PIXELS FROM ONE USER
+  // ============================================================
 
-  function clearPixel(x, y, size) {
+  function clearUserPixels(userId) {
+
+    if (!canvas || !context) {
+
+      // Still remove them from memory.
+
+      livePixels =
+        livePixels.filter(
+          p => p.userId !== userId
+        );
+
+      return;
+    }
+
+
+    /*
+     * Because the canvas is an immediate-mode drawing surface,
+     * we cannot safely remove an old rectangle from underneath
+     * another user's drawing with clearRect().
+     *
+     * Instead:
+     *
+     * 1. Remove that user's pixels from livePixels.
+     * 2. Rebuild the canvas from the remaining pixels.
+     *
+     * This preserves other users' pixels.
+     */
+
+    livePixels =
+      livePixels.filter(
+        p => p.userId !== userId
+      );
+
+
+    redrawCanvas();
+  }
+
+
+  // ============================================================
+  // REDRAW EVERYTHING THAT IS STILL LIVE
+  // ============================================================
+
+  function redrawCanvas() {
 
     if (!canvas || !context) {
       return;
     }
+
+
+    const width =
+      canvas.width;
+
+    const height =
+      canvas.height;
+
+
+    // Clear the actual drawing buffer.
+
+    context.clearRect(
+      0,
+      0,
+      width,
+      height
+    );
 
 
     const screenWidth =
@@ -204,62 +282,51 @@
       window.innerHeight;
 
 
-    const px = x * screenWidth;
-    const py = y * screenHeight;
+    /*
+     * If the canvas has a different internal resolution
+     * from its CSS size, scale drawing correctly.
+     */
 
-    const pixelSize = size * screenWidth;
+    const scaleX =
+      width / screenWidth;
 
-
-    // Save current canvas state.
-
-    context.save();
-
-
-    // Clear only this pixel-sized rectangle.
-
-    context.clearRect(
-      px - pixelSize / 2,
-      py - pixelSize / 2,
-      pixelSize,
-      pixelSize
-    );
+    const scaleY =
+      height / screenHeight;
 
 
-    context.restore();
+    livePixels.forEach(p => {
+
+      const px =
+        p.x * screenWidth;
+
+      const py =
+        p.y * screenHeight;
+
+      const size =
+        p.size * screenWidth;
 
 
-    // --------------------------------------------------------
-    // Remove matching live pixels from memory.
-    // --------------------------------------------------------
+      context.fillStyle =
+        p.color;
 
-    const tolerance = 0.0005;
 
-    livePixels = livePixels.filter(p => {
+      context.fillRect(
 
-      const sameX =
-        Math.abs(p.x - x) <= tolerance;
+        (px - size / 2) * scaleX,
 
-      const sameY =
-        Math.abs(p.y - y) <= tolerance;
+        (py - size / 2) * scaleY,
 
-      const sameSize =
-        Math.abs(
-          (p.size || DEFAULT_PIXEL_SIZE) -
-          size
-        ) <= 0.001;
+        size * scaleX,
 
-      return !(
-        sameX &&
-        sameY &&
-        sameSize
+        size * scaleY
       );
     });
   }
 
 
-  // ------------------------------------------------------------
-  // SEND PIXEL
-  // ------------------------------------------------------------
+  // ============================================================
+  // QUEUE LOCAL PIXEL
+  // ============================================================
 
   function queuePixel(
     x,
@@ -271,12 +338,14 @@
     pendingPixels.push({
 
       x: x,
+
       y: y,
 
       color: color,
 
       size:
-        opts && typeof opts.size === 'number'
+        opts &&
+        typeof opts.size === 'number'
           ? opts.size
           : undefined,
     });
@@ -286,20 +355,24 @@
       pendingPixels.length >=
       MAX_BATCH_SIZE
     ) {
+
       flushPixels();
     }
   }
 
 
-  // ------------------------------------------------------------
-  // PUBLISH PIXELS
-  // ------------------------------------------------------------
+  // ============================================================
+  // FLUSH LOCAL PIXELS
+  // ============================================================
 
   function flushPixels() {
 
-    if (pendingPixels.length === 0) {
+    if (
+      pendingPixels.length === 0
+    ) {
       return;
     }
+
 
     if (!pubnub) {
       return;
@@ -312,12 +385,14 @@
     const batch =
       pendingPixels;
 
+
     pendingPixels = [];
 
 
     pubnub.publish({
 
-      channel: PIXEL_CHANNEL,
+      channel:
+        PIXEL_CHANNEL,
 
       message: {
 
@@ -340,9 +415,9 @@
   }
 
 
-  // ------------------------------------------------------------
-  // FLUSH TIMER
-  // ------------------------------------------------------------
+  // ============================================================
+  // PERIODIC FLUSH
+  // ============================================================
 
   setInterval(
     flushPixels,
@@ -350,13 +425,15 @@
   );
 
 
-  // ------------------------------------------------------------
-  // EXPIRE NORMAL PIXELS
-  // ------------------------------------------------------------
+  // ============================================================
+  // EXPIRE PIXELS
+  // ============================================================
 
   function expirePixels() {
 
-    if (livePixels.length === 0) {
+    if (
+      livePixels.length === 0
+    ) {
       return;
     }
 
@@ -365,16 +442,30 @@
       Date.now();
 
 
+    const before =
+      livePixels.length;
+
+
     livePixels =
       livePixels.filter(
         p => p.expiresAt > now
       );
+
+
+    // If something expired, rebuild the canvas.
+
+    if (
+      livePixels.length !== before
+    ) {
+
+      redrawCanvas();
+    }
   }
 
 
-  // ------------------------------------------------------------
-  // USER ID
-  // ------------------------------------------------------------
+  // ============================================================
+  // CURRENT USER ID
+  // ============================================================
 
   function currentUserId() {
 
@@ -385,9 +476,9 @@
   }
 
 
-  // ------------------------------------------------------------
+  // ============================================================
   // CURRENT DRAW STYLE
-  // ------------------------------------------------------------
+  // ============================================================
 
   function currentStyle() {
 
@@ -398,70 +489,30 @@
   }
 
 
-  // ------------------------------------------------------------
-  // DRAW LIVE PIXELS
-  // ------------------------------------------------------------
+  // ============================================================
+  // FRAME
+  // ============================================================
 
   function afterFrame() {
 
     tryAcquireRefs();
 
 
-    if (!context || !canvas) {
+    if (
+      !context ||
+      !canvas
+    ) {
       return;
     }
 
 
     expirePixels();
-
-
-    if (livePixels.length === 0) {
-      return;
-    }
-
-
-    const screenWidth =
-      canvas.clientWidth ||
-      window.innerWidth;
-
-    const screenHeight =
-      canvas.clientHeight ||
-      window.innerHeight;
-
-
-    livePixels.forEach(p => {
-
-      const px =
-        p.x * screenWidth;
-
-      const py =
-        p.y * screenHeight;
-
-      const size =
-        p.size * screenWidth;
-
-
-      context.fillStyle =
-        p.color;
-
-
-      context.fillRect(
-
-        px - size / 2,
-
-        py - size / 2,
-
-        size,
-
-        size
-      );
-    });
   }
 
 
-  // ------------------------------------------------------------
-  // PIXEL MODE
-  // ------------------------------------------------------------
+  // ============================================================
+  // PIXEL DRAW MODE
+  // ============================================================
 
   function setPixelMode(enabled) {
 
@@ -470,9 +521,9 @@
   }
 
 
-  // ------------------------------------------------------------
+  // ============================================================
   // POINTER DRAWING
-  // ------------------------------------------------------------
+  // ============================================================
 
   function handlePointerEvent(event) {
 
@@ -491,11 +542,14 @@
 
 
     const screenWidth =
-      (canvas && canvas.clientWidth) ||
+      (canvas &&
+        canvas.clientWidth) ||
       window.innerWidth;
 
+
     const screenHeight =
-      (canvas && canvas.clientHeight) ||
+      (canvas &&
+        canvas.clientHeight) ||
       window.innerHeight;
 
 
@@ -512,14 +566,15 @@
   }
 
 
-  // ------------------------------------------------------------
+  // ============================================================
   // POINTER EVENTS
-  // ------------------------------------------------------------
+  // ============================================================
 
   window.addEventListener(
     'pointerdown',
     handlePointerEvent
   );
+
 
   window.addEventListener(
     'pointermove',
@@ -527,11 +582,12 @@
   );
 
 
-  // ------------------------------------------------------------
-  // INITIALIZE
-  // ------------------------------------------------------------
+  // ============================================================
+  // INITIALIZATION
+  // ============================================================
 
   tryAcquireRefs();
+
 
   document.addEventListener(
     'DOMContentLoaded',
@@ -539,9 +595,9 @@
   );
 
 
-  // ------------------------------------------------------------
+  // ============================================================
   // PUBLIC API
-  // ------------------------------------------------------------
+  // ============================================================
 
   window.DrawOnMyFace =
     window.DrawOnMyFace || {};
@@ -563,8 +619,37 @@
     () => livePixels.length;
 
 
-  window.DrawOnMyFace.clearPixel =
-    clearPixel;
+  window.DrawOnMyFace.clearUserPixels =
+    clearUserPixels;
+
+
+  // ============================================================
+  // PUBLIC CLEAR COMMAND
+  // ============================================================
+
+  window.DrawOnMyFace.clear =
+    function() {
+
+      if (!pubnub) {
+        return;
+      }
+
+
+      pubnub.publish({
+
+        channel:
+          PIXEL_CHANNEL,
+
+        message: {
+
+          userId:
+            currentUserId(),
+
+          clear:
+            true,
+        },
+      });
+    };
 
 
 })();
