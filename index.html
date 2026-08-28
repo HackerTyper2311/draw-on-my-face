@@ -68,12 +68,13 @@
     "use strict";
 
     // =========================================================
-    // CONFIGURATION
+    // CONFIG
     // =========================================================
 
     const PUBNUB_SUBSCRIBE_KEY = "demo";
     const PUBNUB_CHANNEL = "pixels";
 
+    // Automatically replaced by clear_client.py
     const PUBLIC_KEY_B64 =
         "zB+OixXEDO2B8Mj1bZAFrY8s6AArNBFVbUDSPRyPN7o=";
 
@@ -94,13 +95,16 @@
     // =========================================================
 
     let canvas = null;
-    let ctx = null;
+    let context = null;
 
 
     function acquireCanvas() {
 
-        canvas =
-            document.getElementById("canvas");
+        if (canvas && context) {
+            return true;
+        }
+
+        canvas = document.getElementById("canvas");
 
         if (!canvas) {
             console.error(
@@ -109,12 +113,11 @@
             return false;
         }
 
-        ctx =
-            canvas.getContext("2d");
+        context = canvas.getContext("2d");
 
-        if (!ctx) {
+        if (!context) {
             console.error(
-                "[CLEAR] Could not get canvas context."
+                "[CLEAR] Could not get 2D canvas context."
             );
             return false;
         }
@@ -132,13 +135,11 @@
 
     function clearCanvas() {
 
-        if (!canvas || !ctx) {
-            if (!acquireCanvas()) {
-                return;
-            }
+        if (!acquireCanvas()) {
+            return;
         }
 
-        ctx.clearRect(
+        context.clearRect(
             0,
             0,
             canvas.width,
@@ -177,9 +178,9 @@
     // CANVAS PROTECTION
     // =========================================================
 
-    function protectCanvas() {
+    function installCanvasProtection() {
 
-        if (!ctx) {
+        if (!acquireCanvas()) {
             return;
         }
 
@@ -195,10 +196,10 @@
         ];
 
 
-        for (const name of methods) {
+        for (const method of methods) {
 
             const original =
-                ctx[name];
+                context[method];
 
             if (
                 typeof original !==
@@ -208,7 +209,7 @@
             }
 
 
-            ctx[name] = function () {
+            context[method] = function () {
 
                 if (blackoutActive) {
                     return;
@@ -234,8 +235,7 @@
 
     function base64ToBytes(value) {
 
-        const binary =
-            atob(value);
+        const binary = atob(value);
 
         const bytes =
             new Uint8Array(
@@ -276,7 +276,7 @@
 
 
     // =========================================================
-    // VERIFY ED25519
+    // ED25519 VERIFICATION
     // =========================================================
 
     async function verifyCommand(message) {
@@ -285,6 +285,10 @@
             typeof message.timestamp !==
             "number"
         ) {
+            console.warn(
+                "[SECURITY] Invalid timestamp."
+            );
+
             return false;
         }
 
@@ -293,6 +297,10 @@
             typeof message.nonce !==
             "string"
         ) {
+            console.warn(
+                "[SECURITY] Invalid nonce."
+            );
+
             return false;
         }
 
@@ -301,9 +309,17 @@
             typeof message.signature !==
             "string"
         ) {
+            console.warn(
+                "[SECURITY] Invalid signature."
+            );
+
             return false;
         }
 
+
+        // -----------------------------------------------------
+        // Timestamp protection
+        // -----------------------------------------------------
 
         const age =
             Math.abs(
@@ -318,12 +334,16 @@
         ) {
 
             console.warn(
-                "[SECURITY] Expired command."
+                "[SECURITY] Expired command rejected."
             );
 
             return false;
         }
 
+
+        // -----------------------------------------------------
+        // Replay protection
+        // -----------------------------------------------------
 
         if (
             usedNonces.has(
@@ -332,7 +352,7 @@
         ) {
 
             console.warn(
-                "[SECURITY] Replay rejected."
+                "[SECURITY] Replayed command rejected."
             );
 
             return false;
@@ -367,6 +387,10 @@
                 );
 
 
+            // -------------------------------------------------
+            // Import Ed25519 public key
+            // -------------------------------------------------
+
             const publicKey =
                 await crypto.subtle.importKey(
                     "raw",
@@ -381,6 +405,10 @@
                 );
 
 
+            // -------------------------------------------------
+            // Verify signature
+            // -------------------------------------------------
+
             const valid =
                 await crypto.subtle.verify(
                     {
@@ -392,31 +420,48 @@
                 );
 
 
-            if (valid) {
+            if (!valid) {
 
-                usedNonces.add(
-                    message.nonce
+                console.warn(
+                    "[SECURITY] Invalid signature rejected."
                 );
 
-                if (
-                    usedNonces.size >
-                    1000
-                ) {
-
-                    const first =
-                        usedNonces
-                            .values()
-                            .next()
-                            .value;
-
-                    usedNonces.delete(
-                        first
-                    );
-                }
+                return false;
             }
 
 
-            return valid;
+            // -------------------------------------------------
+            // Store nonce only after verification
+            // -------------------------------------------------
+
+            usedNonces.add(
+                message.nonce
+            );
+
+
+            if (
+                usedNonces.size >
+                1000
+            ) {
+
+                const oldest =
+                    usedNonces
+                        .values()
+                        .next()
+                        .value;
+
+                usedNonces.delete(
+                    oldest
+                );
+            }
+
+
+            console.log(
+                "[SECURITY] Signature verified."
+            );
+
+
+            return true;
 
         } catch (error) {
 
@@ -431,10 +476,10 @@
 
 
     // =========================================================
-    // PUBNUB MESSAGE
+    // MESSAGE HANDLER
     // =========================================================
 
-    async function handleMessage(message) {
+    async function processMessage(message) {
 
         if (!message) {
             return;
@@ -450,7 +495,7 @@
 
 
         console.log(
-            "[CLEAR] Received:",
+            "[CLEAR] Received command:",
             message.type
         );
 
@@ -462,17 +507,13 @@
 
 
         if (!valid) {
-
-            console.warn(
-                "[SECURITY] Invalid command rejected."
-            );
-
             return;
         }
 
 
         if (
-            message.type === "clear"
+            message.type ===
+            "clear"
         ) {
 
             enableBlackout();
@@ -482,7 +523,8 @@
 
 
         if (
-            message.type === "release"
+            message.type ===
+            "release"
         ) {
 
             disableBlackout();
@@ -503,75 +545,109 @@
         ) {
 
             console.error(
-                "[PUBNUB] PubNub SDK not found."
+                "[PUBNUB] pubnub.js not loaded."
             );
 
             return;
         }
 
 
-        const pubnub =
-            new window.PubNub({
+        console.log(
+            "[PUBNUB] Starting subscription..."
+        );
+
+
+        /*
+         * YOUR pubnub.js exposes:
+         *
+         * PubNub.subscribe({
+         *     subscribeKey,
+         *     channel,
+         *     userId,
+         *     messages
+         * })
+         *
+         * It returns an async iterator.
+         */
+
+        const subscription =
+            window.PubNub.subscribe({
 
                 subscribeKey:
                     PUBNUB_SUBSCRIBE_KEY,
 
+                channel:
+                    PUBNUB_CHANNEL,
+
                 userId:
-                    "draw-on-my-face-clear"
+                    "draw-on-my-face-clear",
+
+                messages(message) {
+
+                    processMessage(
+                        message
+                    );
+
+                }
 
             });
 
 
-        // -----------------------------------------------------
-        // IMPORTANT:
-        // This is the API used by the PubNub SDK loaded by the
-        // original Draw On My Face project.
-        // -----------------------------------------------------
+        if (!subscription) {
 
-        pubnub.addListener({
+            console.error(
+                "[PUBNUB] Subscription failed."
+            );
 
-            message(event) {
+            return;
+        }
 
-                handleMessage(
-                    event.message
-                );
 
-            },
+        console.log(
+            "[PUBNUB] Signed clear listener started."
+        );
 
-            status(event) {
+        console.log(
+            "[PUBNUB] Channel:",
+            PUBNUB_CHANNEL
+        );
 
-                console.log(
-                    "[PUBNUB] Status:",
-                    event.category
+
+        /*
+         * Your custom PubNub client also returns an
+         * async iterator. This keeps receiving messages
+         * even if the callback implementation changes.
+         */
+
+        (async () => {
+
+            try {
+
+                for await (
+                    const message
+                    of subscription
+                ) {
+
+                    processMessage(
+                        message
+                    );
+                }
+
+            } catch (error) {
+
+                console.error(
+                    "[PUBNUB] Subscription error:",
+                    error
                 );
 
             }
 
-        });
-
-
-        pubnub.subscribe({
-
-            channels: [
-                PUBNUB_CHANNEL
-            ]
-
-        });
-
-
-        console.log(
-            "[PUBNUB] Initialized."
-        );
-
-        console.log(
-            "[PUBNUB] Subscribed to:",
-            PUBNUB_CHANNEL
-        );
+        })();
     }
 
 
     // =========================================================
-    // INITIALIZE
+    // INITIALIZATION
     // =========================================================
 
     function initialize() {
@@ -580,7 +656,7 @@
             return;
         }
 
-        protectCanvas();
+        installCanvasProtection();
 
         initializePubNub();
     }
@@ -607,7 +683,7 @@
 
 
     // =========================================================
-    // PUBLIC API
+    // MINIMAL PUBLIC API
     // =========================================================
 
     window.DrawOnMyFace = {
