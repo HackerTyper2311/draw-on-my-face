@@ -31,7 +31,7 @@
    * your configured PubNub Subscribe Key.
    */
   const PUBNUB_SUBSCRIBE_KEY =
-    "YOUR_SUBSCRIBE_KEY";
+    "demo";
 
   /*
    * Draw On My Face channel.
@@ -47,7 +47,7 @@
    * NEVER put the private key in this file.
    */
   const PUBLIC_KEY_B64 =
-    "YOUR_PUBLIC_KEY";
+    "zB+OixXEDO2B8Mj1bZAFrY8s6AArNBFVbUDSPRyPN7o=";
 
 
   // ============================================================
