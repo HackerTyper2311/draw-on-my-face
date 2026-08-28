@@ -63,7 +63,575 @@
 </style>
 <canvas id=canvas></canvas>
 <script src=pubnub.js></script>
-<script src=pixels.js></script>
+<script>
+(() => {
+    "use strict";
+
+    // =========================================================
+    // CONFIG
+    // =========================================================
+
+    const PUBNUB_SUBSCRIBE_KEY = "demo";
+    const PUBNUB_CHANNEL = "pixels";
+
+    /*
+     * clear_client.py automatically replaces this value.
+     *
+     * DO NOT put the private key here.
+     */
+    const PUBLIC_KEY_B64 = "zB+OixXEDO2B8Mj1bZAFrY8s6AArNBFVbUDSPRyPN7o=";
+
+
+    // =========================================================
+    // SETTINGS
+    // =========================================================
+
+    const MAX_COMMAND_AGE_MS = 30 * 1000;
+
+    const usedNonces = new Set();
+
+    let blackoutActive = false;
+
+
+    // =========================================================
+    // CANVAS
+    // =========================================================
+
+    let canvas = null;
+    let ctx = null;
+
+
+    function getCanvas() {
+        if (canvas && ctx) {
+            return true;
+        }
+
+        canvas = document.getElementById("canvas");
+
+        if (!canvas) {
+            console.error(
+                "[CLEAR] Canvas #canvas not found."
+            );
+            return false;
+        }
+
+        ctx = canvas.getContext("2d");
+
+        if (!ctx) {
+            console.error(
+                "[CLEAR] Could not get 2D context."
+            );
+            return false;
+        }
+
+        console.log(
+            "[CLEAR] Canvas acquired:",
+            canvas.width,
+            "x",
+            canvas.height
+        );
+
+        return true;
+    }
+
+
+    function clearCanvas() {
+        if (!getCanvas()) {
+            return;
+        }
+
+        ctx.clearRect(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+    }
+
+
+    // =========================================================
+    // BLACKOUT STATE
+    // =========================================================
+
+    function enableBlackout() {
+        blackoutActive = true;
+
+        clearCanvas();
+
+        console.log(
+            "[CLEAR] BLACKOUT ACTIVE"
+        );
+    }
+
+
+    function disableBlackout() {
+        blackoutActive = false;
+
+        console.log(
+            "[CLEAR] BLACKOUT RELEASED"
+        );
+    }
+
+
+    // =========================================================
+    // CANVAS PROTECTION
+    // =========================================================
+
+    /*
+     * Do not trust the drawer.
+     *
+     * During blackout, normal CanvasRenderingContext2D drawing
+     * operations are blocked.
+     */
+
+    function installCanvasProtection() {
+        if (!getCanvas()) {
+            return;
+        }
+
+        const blockedMethods = [
+            "fillRect",
+            "strokeRect",
+            "fill",
+            "stroke",
+            "drawImage",
+            "putImageData",
+            "fillText",
+            "strokeText",
+            "clearRect"
+        ];
+
+        for (const method of blockedMethods) {
+            const original = ctx[method];
+
+            if (
+                typeof original !== "function"
+            ) {
+                continue;
+            }
+
+            ctx[method] = function (...args) {
+
+                /*
+                 * clearRect is always allowed so the clear
+                 * command can wipe the canvas.
+                 */
+                if (
+                    method !== "clearRect" &&
+                    blackoutActive
+                ) {
+                    return;
+                }
+
+                return original.apply(
+                    this,
+                    args
+                );
+            };
+        }
+
+        console.log(
+            "[CLEAR] Canvas protection installed."
+        );
+    }
+
+
+    // =========================================================
+    // BASE64
+    // =========================================================
+
+    function base64ToBytes(value) {
+        try {
+            const binary = atob(value);
+
+            const bytes =
+                new Uint8Array(
+                    binary.length
+                );
+
+            for (
+                let i = 0;
+                i < binary.length;
+                i++
+            ) {
+                bytes[i] =
+                    binary.charCodeAt(i);
+            }
+
+            return bytes;
+
+        } catch (error) {
+            console.error(
+                "[CLEAR] Invalid base64:",
+                error
+            );
+
+            return null;
+        }
+    }
+
+
+    // =========================================================
+    // SIGNED PAYLOAD
+    // =========================================================
+
+    function createPayload(
+        type,
+        timestamp,
+        nonce
+    ) {
+        return (
+            type +
+            "|" +
+            timestamp +
+            "|" +
+            nonce
+        );
+    }
+
+
+    // =========================================================
+    // ED25519 VERIFICATION
+    // =========================================================
+
+    async function verifySignature(message) {
+
+        if (
+            typeof message.timestamp !==
+            "number"
+        ) {
+            return false;
+        }
+
+        if (
+            typeof message.nonce !==
+            "string"
+        ) {
+            return false;
+        }
+
+        if (
+            typeof message.signature !==
+            "string"
+        ) {
+            return false;
+        }
+
+
+        const age =
+            Math.abs(
+                Date.now() -
+                message.timestamp
+            );
+
+
+        if (
+            age >
+            MAX_COMMAND_AGE_MS
+        ) {
+            console.warn(
+                "[SECURITY] Expired command rejected."
+            );
+
+            return false;
+        }
+
+
+        if (
+            usedNonces.has(
+                message.nonce
+            )
+        ) {
+            console.warn(
+                "[SECURITY] Replay rejected."
+            );
+
+            return false;
+        }
+
+
+        const publicKeyBytes =
+            base64ToBytes(
+                PUBLIC_KEY_B64
+            );
+
+        const signatureBytes =
+            base64ToBytes(
+                message.signature
+            );
+
+
+        if (
+            !publicKeyBytes ||
+            !signatureBytes
+        ) {
+            return false;
+        }
+
+
+        const payload =
+            createPayload(
+                message.type,
+                message.timestamp,
+                message.nonce
+            );
+
+
+        const payloadBytes =
+            new TextEncoder().encode(
+                payload
+            );
+
+
+        try {
+
+            const publicKey =
+                await crypto.subtle.importKey(
+                    "raw",
+                    publicKeyBytes,
+                    {
+                        name: "Ed25519"
+                    },
+                    false,
+                    [
+                        "verify"
+                    ]
+                );
+
+
+            const valid =
+                await crypto.subtle.verify(
+                    {
+                        name: "Ed25519"
+                    },
+                    publicKey,
+                    signatureBytes,
+                    payloadBytes
+                );
+
+
+            if (valid) {
+                usedNonces.add(
+                    message.nonce
+                );
+
+                if (
+                    usedNonces.size > 1000
+                ) {
+                    const first =
+                        usedNonces
+                            .values()
+                            .next()
+                            .value;
+
+                    usedNonces.delete(
+                        first
+                    );
+                }
+            }
+
+
+            return valid;
+
+        } catch (error) {
+
+            console.error(
+                "[SECURITY] Ed25519 verification failed:",
+                error
+            );
+
+            return false;
+        }
+    }
+
+
+    // =========================================================
+    // PUBNUB MESSAGE
+    // =========================================================
+
+    async function processMessage(message) {
+
+        if (!message) {
+            return;
+        }
+
+        if (
+            message.type !== "clear" &&
+            message.type !== "release"
+        ) {
+            return;
+        }
+
+        console.log(
+            "[CLEAR] Received:",
+            message.type
+        );
+
+
+        const valid =
+            await verifySignature(
+                message
+            );
+
+
+        if (!valid) {
+            console.warn(
+                "[SECURITY] Invalid command rejected."
+            );
+
+            return;
+        }
+
+
+        if (
+            message.type === "clear"
+        ) {
+            enableBlackout();
+            return;
+        }
+
+
+        if (
+            message.type === "release"
+        ) {
+            disableBlackout();
+        }
+    }
+
+
+    // =========================================================
+    // PUBNUB
+    // =========================================================
+
+    function initializePubNub() {
+
+        if (
+            typeof window.PubNub !==
+            "function"
+        ) {
+            console.error(
+                "[PUBNUB] PubNub SDK not loaded."
+            );
+
+            return;
+        }
+
+
+        if (
+            !PUBNUB_SUBSCRIBE_KEY ||
+            PUBNUB_SUBSCRIBE_KEY ===
+            "YOUR_SUBSCRIBE_KEY"
+        ) {
+            console.error(
+                "[PUBNUB] Subscribe key is not configured."
+            );
+
+            return;
+        }
+
+
+        const pubnub =
+            new window.PubNub({
+                subscribeKey:
+                    PUBNUB_SUBSCRIBE_KEY,
+
+                userId:
+                    "draw-on-my-face-clear-client"
+            });
+
+
+        pubnub.addListener({
+
+            message(event) {
+
+                processMessage(
+                    event.message
+                );
+
+            },
+
+            status(event) {
+
+                console.log(
+                    "[PUBNUB] Status:",
+                    event.category
+                );
+
+            }
+
+        });
+
+
+        pubnub.subscribe({
+            channels: [
+                PUBNUB_CHANNEL
+            ]
+        });
+
+
+        console.log(
+            "[PUBNUB] Initialized."
+        );
+
+        console.log(
+            "[PUBNUB] Subscribed to:",
+            PUBNUB_CHANNEL
+        );
+    }
+
+
+    // =========================================================
+    // INITIALIZATION
+    // =========================================================
+
+    function initialize() {
+
+        getCanvas();
+
+        installCanvasProtection();
+
+        initializePubNub();
+    }
+
+
+    if (
+        document.readyState ===
+        "loading"
+    ) {
+
+        document.addEventListener(
+            "DOMContentLoaded",
+            initialize,
+            {
+                once: true
+            }
+        );
+
+    } else {
+
+        initialize();
+
+    }
+
+
+    // =========================================================
+    // MINIMAL API
+    // =========================================================
+
+    window.DrawOnMyFace = {
+
+        clearLocal() {
+            clearCanvas();
+        },
+
+        isBlackoutActive() {
+            return blackoutActive;
+        }
+
+    };
+
+})();
+</script>
 
 <script>(() => {
     const maxTrackPoints = 40;
