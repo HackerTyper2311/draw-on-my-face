@@ -7,7 +7,7 @@
    * SIGNED CLEAR-ONLY CLIENT
    * ============================================================
    *
-   * This file intentionally DOES NOT implement:
+   * This replacement intentionally does NOT contain:
    *
    * - drawing
    * - pointer events
@@ -18,12 +18,13 @@
    * - drawing styles
    * - user pixel tracking
    *
-   * It only:
+   * It ONLY:
    *
-   * 1. Subscribes to the pixels channel.
-   * 2. Receives signed clear commands.
-   * 3. Verifies the Ed25519 signature.
-   * 4. Clears the canvas if the signature is valid.
+   * 1. Subscribes to the existing "pixels" PubNub channel.
+   * 2. Accepts messages with type === "clear".
+   * 3. Checks timestamp and nonce.
+   * 4. Verifies the Ed25519 signature.
+   * 5. Clears the canvas if everything is valid.
    *
    * ============================================================
    */
@@ -32,36 +33,48 @@
   // CONFIGURATION
   // ============================================================
 
+  /*
+   * For your demo, put your PubNub Subscribe Key here.
+   *
+   * Example:
+   *
+   * const PUBNUB_SUBSCRIBE_KEY =
+   *   "sub-c-xxxxxxxxxxxxxxxx";
+   */
   const PUBNUB_SUBSCRIBE_KEY =
     "demo";
 
+  /*
+   * Same channel used by Draw On My Face.
+   */
   const PUBNUB_CHANNEL =
     "pixels";
 
   /*
-   * clear_client.py automatically replaces this value.
+   * This is the Ed25519 PUBLIC key.
    *
-   * DO NOT put the private key here.
+   * clear_client.py automatically writes the generated
+   * public key into this value.
+   *
+   * NEVER put private.key here.
    */
   const PUBLIC_KEY_B64 =
     "zB+OixXEDO2B8Mj1bZAFrY8s6AArNBFVbUDSPRyPN7o=";
 
 
   // ============================================================
-  // SECURITY SETTINGS
+  // SECURITY
   // ============================================================
 
   /*
-   * A clear command is only valid for 30 seconds.
-   *
-   * This prevents an attacker from recording an old valid
-   * command and replaying it much later.
+   * Clear commands older than 30 seconds are rejected.
    */
   const MAX_COMMAND_AGE_MS =
     30 * 1000;
 
   /*
-   * Commands already processed during this page session.
+   * Nonces that have already been accepted during this
+   * browser session.
    */
   const usedNonces =
     new Set();
@@ -81,7 +94,7 @@
 
 
   // ============================================================
-  // CANVAS
+  // FIND CANVAS
   // ============================================================
 
   function acquireCanvas() {
@@ -100,7 +113,8 @@
       return false;
     }
 
-    canvas = element;
+    canvas =
+      element;
 
     context =
       element.getContext("2d");
@@ -138,42 +152,55 @@
 
 
   // ============================================================
-  // BASE64
+  // BASE64 -> BYTES
   // ============================================================
 
   function base64ToBytes(base64) {
 
-    const binary =
-      atob(base64);
+    try {
 
-    const bytes =
-      new Uint8Array(
-        binary.length
+      const binary =
+        atob(base64);
+
+      const bytes =
+        new Uint8Array(
+          binary.length
+        );
+
+      for (
+        let i = 0;
+        i < binary.length;
+        i++
+      ) {
+
+        bytes[i] =
+          binary.charCodeAt(i);
+
+      }
+
+      return bytes;
+
+    } catch (error) {
+
+      console.error(
+        "[DrawOnMyFace] Invalid Base64:",
+        error
       );
 
-    for (
-      let i = 0;
-      i < binary.length;
-      i++
-    ) {
-      bytes[i] =
-        binary.charCodeAt(i);
+      return null;
     }
-
-    return bytes;
   }
 
 
   // ============================================================
   // SIGNED PAYLOAD
   // ============================================================
-
   /*
-   * Python signs EXACTLY this:
+   * Python signs exactly:
    *
    * clear|timestamp|nonce
    *
-   * Therefore JavaScript must verify exactly the same bytes.
+   * JavaScript must generate the EXACT same bytes.
    */
   function createSignedPayload(
     timestamp,
@@ -201,15 +228,37 @@
 
     try {
 
+      // --------------------------------------------------------
+      // Public key
+      // --------------------------------------------------------
+
       const publicKeyBytes =
         base64ToBytes(
           PUBLIC_KEY_B64
         );
 
+      if (!publicKeyBytes) {
+        return false;
+      }
+
+
+      // --------------------------------------------------------
+      // Signature
+      // --------------------------------------------------------
+
       const signatureBytes =
         base64ToBytes(
           signatureB64
         );
+
+      if (!signatureBytes) {
+        return false;
+      }
+
+
+      // --------------------------------------------------------
+      // Payload
+      // --------------------------------------------------------
 
       const payload =
         createSignedPayload(
@@ -222,35 +271,57 @@
           payload
         );
 
-      /*
-       * Browser Web Crypto Ed25519.
-       */
+
+      // --------------------------------------------------------
+      // Import Ed25519 public key
+      // --------------------------------------------------------
+
       const publicKey =
         await crypto.subtle.importKey(
+
           "raw",
+
           publicKeyBytes,
+
           {
             name: "Ed25519"
           },
+
           false,
+
           [
             "verify"
           ]
+
         );
 
-      return await crypto.subtle.verify(
-        {
-          name: "Ed25519"
-        },
-        publicKey,
-        signatureBytes,
-        payloadBytes
-      );
+
+      // --------------------------------------------------------
+      // Verify signature
+      // --------------------------------------------------------
+
+      const valid =
+        await crypto.subtle.verify(
+
+          {
+            name: "Ed25519"
+          },
+
+          publicKey,
+
+          signatureBytes,
+
+          payloadBytes
+
+        );
+
+
+      return valid;
 
     } catch (error) {
 
       console.error(
-        "[DrawOnMyFace] Ed25519 verification error:",
+        "[DrawOnMyFace] Ed25519 verification failed:",
         error
       );
 
@@ -260,7 +331,7 @@
 
 
   // ============================================================
-  // CLEAR COMMAND
+  // PROCESS PUBNUB MESSAGE
   // ============================================================
 
   async function processMessage(
@@ -271,56 +342,38 @@
       return;
     }
 
-    /*
-     * Ignore absolutely everything except:
-     *
-     * {
-     *   type: "clear",
-     *   ...
-     * }
-     */
+
+    // ----------------------------------------------------------
+    // ONLY ACCEPT CLEAR
+    // ----------------------------------------------------------
+
     if (
-      message.type !== "clear"
+      message.type !==
+      "clear"
     ) {
+
+      /*
+       * Ignore all other PubNub messages.
+       *
+       * This means normal pixel drawing messages from the
+       * original system are NOT processed by this file.
+       */
+
       return;
     }
 
 
     // ----------------------------------------------------------
-    // Validate fields
+    // VALIDATE TIMESTAMP
     // ----------------------------------------------------------
 
     if (
       typeof message.timestamp !==
-        "number"
+      "number"
     ) {
 
       console.warn(
-        "[DrawOnMyFace] Clear command has no valid timestamp."
-      );
-
-      return;
-    }
-
-    if (
-      typeof message.nonce !==
-        "string"
-    ) {
-
-      console.warn(
-        "[DrawOnMyFace] Clear command has no valid nonce."
-      );
-
-      return;
-    }
-
-    if (
-      typeof message.signature !==
-        "string"
-    ) {
-
-      console.warn(
-        "[DrawOnMyFace] Clear command has no signature."
+        "[DrawOnMyFace] Rejected clear: invalid timestamp."
       );
 
       return;
@@ -328,7 +381,41 @@
 
 
     // ----------------------------------------------------------
-    // Timestamp protection
+    // VALIDATE NONCE
+    // ----------------------------------------------------------
+
+    if (
+      typeof message.nonce !==
+      "string"
+    ) {
+
+      console.warn(
+        "[DrawOnMyFace] Rejected clear: invalid nonce."
+      );
+
+      return;
+    }
+
+
+    // ----------------------------------------------------------
+    // VALIDATE SIGNATURE
+    // ----------------------------------------------------------
+
+    if (
+      typeof message.signature !==
+      "string"
+    ) {
+
+      console.warn(
+        "[DrawOnMyFace] Rejected clear: missing signature."
+      );
+
+      return;
+    }
+
+
+    // ----------------------------------------------------------
+    // TIMESTAMP CHECK
     // ----------------------------------------------------------
 
     const now =
@@ -336,8 +423,10 @@
 
     const age =
       Math.abs(
-        now - message.timestamp
+        now -
+        message.timestamp
       );
+
 
     if (
       age >
@@ -345,7 +434,7 @@
     ) {
 
       console.warn(
-        "[DrawOnMyFace] Rejected expired clear command."
+        "[DrawOnMyFace] Rejected clear: expired command."
       );
 
       return;
@@ -353,7 +442,7 @@
 
 
     // ----------------------------------------------------------
-    // Replay protection
+    // REPLAY CHECK
     // ----------------------------------------------------------
 
     if (
@@ -363,7 +452,7 @@
     ) {
 
       console.warn(
-        "[DrawOnMyFace] Rejected replayed clear command."
+        "[DrawOnMyFace] Rejected clear: replayed command."
       );
 
       return;
@@ -371,21 +460,25 @@
 
 
     // ----------------------------------------------------------
-    // Cryptographic verification
+    // VERIFY CRYPTOGRAPHIC SIGNATURE
     // ----------------------------------------------------------
 
     const valid =
       await verifySignature(
+
         message.timestamp,
+
         message.nonce,
+
         message.signature
+
       );
 
 
     if (!valid) {
 
       console.warn(
-        "[DrawOnMyFace] Rejected INVALID clear signature."
+        "[DrawOnMyFace] Rejected clear: INVALID SIGNATURE."
       );
 
       return;
@@ -393,7 +486,7 @@
 
 
     // ----------------------------------------------------------
-    // Remember nonce
+    // REMEMBER NONCE
     // ----------------------------------------------------------
 
     usedNonces.add(
@@ -402,7 +495,7 @@
 
 
     /*
-     * Prevent unlimited memory usage.
+     * Prevent the Set from growing forever.
      */
     if (
       usedNonces.size >
@@ -422,11 +515,11 @@
 
 
     // ----------------------------------------------------------
-    // VALID
+    // VALID COMMAND
     // ----------------------------------------------------------
 
     console.log(
-      "[DrawOnMyFace] Valid signed clear command."
+      "[DrawOnMyFace] VALID SIGNED CLEAR."
     );
 
     clearCanvas();
@@ -443,9 +536,11 @@
       return true;
     }
 
-    /*
-     * The repository already loads the PubNub SDK.
-     */
+
+    // ----------------------------------------------------------
+    // Check SDK
+    // ----------------------------------------------------------
+
     if (
       typeof window.PubNub !==
       "function"
@@ -459,35 +554,40 @@
     }
 
 
+    // ----------------------------------------------------------
+    // Subscribe key
+    // ----------------------------------------------------------
+
     if (
       !PUBNUB_SUBSCRIBE_KEY ||
       PUBNUB_SUBSCRIBE_KEY ===
-        "YOUR_SUBSCRIBE_KEY"
+      "YOUR_SUBSCRIBE_KEY"
     ) {
 
       console.error(
-        "[DrawOnMyFace] Set PUBNUB_SUBSCRIBE_KEY in pixels.js."
+        "[DrawOnMyFace] Invalid PubNub Subscribe Key."
       );
 
       return false;
     }
 
 
+    // ----------------------------------------------------------
+    // Use the SAME PubNub initialization style as the
+    // original Draw On My Face repository.
+    // ----------------------------------------------------------
+
     /*
-     * PubNub JavaScript SDK.
+     * The existing repository uses the older global PubNub
+     * interface, so we don't use:
+     *
+     *     pubnub.channel(...)
+     *
+     * here.
      */
+
     pubnub =
-      new window.PubNub({
-
-        subscribeKey:
-          PUBNUB_SUBSCRIBE_KEY,
-
-        userId:
-          "draw-on-my-face-clear-client",
-
-        ssl:
-          true
-      });
+      window.PubNub({});
 
 
     return true;
@@ -500,44 +600,42 @@
 
   function subscribe() {
 
-    if (!initializePubNub()) {
+    if (
+      !initializePubNub()
+    ) {
+
       return;
     }
 
-    if (subscribed) {
+
+    if (
+      subscribed
+    ) {
+
       return;
     }
 
 
     /*
-     * Modern PubNub subscription API.
+     * IMPORTANT:
+     *
+     * This uses the old PubNub API that the original
+     * Draw On My Face client uses.
      */
-    const channel =
-      pubnub.channel(
-        PUBNUB_CHANNEL
-      );
+
+    pubnub.subscribe({
+
+      channel:
+        PUBNUB_CHANNEL,
+
+      message:
+        processMessage
+
+    });
 
 
-    const subscription =
-      channel.subscription();
-
-
-    subscription.on(
-      "message",
-      event => {
-
-        processMessage(
-          event.message
-        );
-
-      }
-    );
-
-
-    subscription.subscribe();
-
-
-    subscribed = true;
+    subscribed =
+      true;
 
 
     console.log(
@@ -577,24 +675,20 @@
   // ============================================================
 
   /*
-   * Only local clearing is exposed.
+   * Only a local clear helper exists.
    *
-   * There is intentionally NO:
+   * There is NO network clear function here.
    *
-   * DrawOnMyFace.queuePixel
-   * DrawOnMyFace.flushPixels
-   * DrawOnMyFace.setPixelMode
-   * DrawOnMyFace.getLivePixelCount
-   * DrawOnMyFace.clearUserPixels
-   * DrawOnMyFace.clear
-   *
-   * The only operation here is local canvas clearing.
+   * A network clear can only happen through a valid
+   * Ed25519-signed PubNub command.
    */
+
   window.DrawOnMyFace = {
 
     clearLocal:
       clearCanvas
 
   };
+
 
 })();
