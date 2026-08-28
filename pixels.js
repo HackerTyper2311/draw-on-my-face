@@ -7,45 +7,34 @@
    * SIGNED CLEAR-ONLY CLIENT
    * ============================================================
    *
-   * This file intentionally contains NO:
+   * This replacement intentionally does NOT contain the
+   * original drawing/pixel features.
    *
-   * - drawing
-   * - pointer events
-   * - pixel queues
-   * - pixel batching
-   * - pixel fading
-   * - pixel storage
-   * - drawing styles
-   * - user pixel tracking
+   * It only:
    *
-   * It ONLY:
-   *
-   * 1. Connects to PubNub.
-   * 2. Subscribes to "pixels".
-   * 3. Looks for { type: "clear" }.
-   * 4. Checks timestamp.
-   * 5. Checks nonce.
-   * 6. Verifies Ed25519.
-   * 7. Clears the canvas if valid.
+   *   - connects to PubNub
+   *   - subscribes to "pixels"
+   *   - accepts signed clear commands
+   *   - verifies Ed25519 signatures
+   *   - clears the canvas after successful verification
    *
    * ============================================================
    */
+
 
   // ============================================================
   // CONFIGURATION
   // ============================================================
 
   /*
-   * Your PubNub Subscribe Key.
-   *
-   * For the demo, put the same subscribe key used by the
-   * Draw On My Face PubNub setup here.
+   * clear_client.py automatically replaces this value with
+   * your configured PubNub Subscribe Key.
    */
   const PUBNUB_SUBSCRIBE_KEY =
-    "demo";
+    "YOUR_SUBSCRIBE_KEY";
 
   /*
-   * Existing Draw On My Face channel.
+   * Draw On My Face channel.
    */
   const PUBNUB_CHANNEL =
     "pixels";
@@ -53,27 +42,30 @@
   /*
    * Ed25519 PUBLIC KEY.
    *
-   * Your clear_client.py automatically replaces this value.
+   * clear_client.py automatically replaces this value.
    *
-   * NEVER put private.key here.
+   * NEVER put the private key in this file.
    */
   const PUBLIC_KEY_B64 =
-    "zB+OixXEDO2B8Mj1bZAFrY8s6AArNBFVbUDSPRyPN7o=";
+    "YOUR_PUBLIC_KEY";
 
 
   // ============================================================
-  // SECURITY SETTINGS
+  // SECURITY
   // ============================================================
 
   /*
-   * A signed command is only accepted for 30 seconds.
+   * Commands older than this are rejected.
+   *
+   * This prevents old valid commands from being replayed
+   * much later.
    */
   const MAX_COMMAND_AGE_MS =
     30 * 1000;
 
+
   /*
-   * Prevent the same signed command from being processed
-   * twice during this browser session.
+   * Nonces already processed by this page.
    */
   const usedNonces =
     new Set();
@@ -97,24 +89,32 @@
   // ============================================================
 
   function log(...args) {
+
     console.log(
       "[DrawOnMyFace]",
       ...args
     );
+
   }
 
+
   function warn(...args) {
+
     console.warn(
       "[DrawOnMyFace]",
       ...args
     );
+
   }
 
+
   function error(...args) {
+
     console.error(
       "[DrawOnMyFace]",
       ...args
     );
+
   }
 
 
@@ -128,13 +128,17 @@
       canvas &&
       context
     ) {
+
       return true;
+
     }
+
 
     const element =
       document.getElementById(
         "canvas"
       );
+
 
     if (!element) {
 
@@ -143,24 +147,30 @@
       );
 
       return false;
+
     }
+
 
     canvas =
       element;
 
+
     context =
-      element.getContext(
+      canvas.getContext(
         "2d"
       );
+
 
     if (!context) {
 
       error(
-        "Could not get 2D canvas context."
+        "Could not obtain 2D canvas context."
       );
 
       return false;
+
     }
+
 
     log(
       "Canvas acquired:",
@@ -169,7 +179,9 @@
       canvas.height
     );
 
+
     return true;
+
   }
 
 
@@ -184,11 +196,13 @@
     ) {
 
       warn(
-        "Cannot clear because canvas is unavailable."
+        "Canvas is not available."
       );
 
       return;
+
     }
+
 
     context.clearRect(
       0,
@@ -197,29 +211,33 @@
       canvas.height
     );
 
+
     log(
       "Canvas cleared."
     );
+
   }
 
 
   // ============================================================
-  // BASE64 -> UINT8ARRAY
+  // BASE64 DECODER
   // ============================================================
 
   function base64ToBytes(
-    base64
+    value
   ) {
 
     try {
 
       const binary =
-        atob(base64);
+        atob(value);
+
 
       const bytes =
         new Uint8Array(
           binary.length
         );
+
 
       for (
         let i = 0;
@@ -232,29 +250,33 @@
 
       }
 
+
       return bytes;
 
-    } catch (e) {
+    } catch (err) {
 
       error(
-        "Base64 decoding failed:",
-        e
+        "Invalid Base64 data:",
+        err
       );
 
       return null;
+
     }
+
   }
 
 
   // ============================================================
-  // CREATE EXACT SIGNED PAYLOAD
+  // SIGNED PAYLOAD
   // ============================================================
+
   /*
-   * Python signs exactly:
+   * clear_client.py signs EXACTLY:
    *
    * clear|timestamp|nonce
    *
-   * DO NOT change this format.
+   * JavaScript must create the exact same byte sequence.
    */
   function createSignedPayload(
     timestamp,
@@ -268,11 +290,12 @@
       + "|"
       + nonce
     );
+
   }
 
 
   // ============================================================
-  // VERIFY ED25519
+  // ED25519 VERIFICATION
   // ============================================================
 
   async function verifySignature(
@@ -293,11 +316,12 @@
         );
 
         return false;
+
       }
 
 
       // --------------------------------------------------------
-      // Public key
+      // PUBLIC KEY
       // --------------------------------------------------------
 
       const publicKeyBytes =
@@ -305,13 +329,11 @@
           PUBLIC_KEY_B64
         );
 
+
       if (!publicKeyBytes) {
 
-        error(
-          "Could not decode public key."
-        );
-
         return false;
+
       }
 
 
@@ -321,17 +343,17 @@
       ) {
 
         error(
-          "Ed25519 public key must be 32 bytes.",
-          "Got:",
+          "Invalid Ed25519 public key length:",
           publicKeyBytes.length
         );
 
         return false;
+
       }
 
 
       // --------------------------------------------------------
-      // Signature
+      // SIGNATURE
       // --------------------------------------------------------
 
       const signatureBytes =
@@ -339,13 +361,11 @@
           signatureB64
         );
 
+
       if (!signatureBytes) {
 
-        error(
-          "Could not decode signature."
-        );
-
         return false;
+
       }
 
 
@@ -355,17 +375,17 @@
       ) {
 
         error(
-          "Ed25519 signature must be 64 bytes.",
-          "Got:",
+          "Invalid Ed25519 signature length:",
           signatureBytes.length
         );
 
         return false;
+
       }
 
 
       // --------------------------------------------------------
-      // Payload
+      // PAYLOAD
       // --------------------------------------------------------
 
       const payload =
@@ -374,10 +394,12 @@
           nonce
         );
 
+
       log(
         "Verifying payload:",
         payload
       );
+
 
       const payloadBytes =
         new TextEncoder().encode(
@@ -386,7 +408,7 @@
 
 
       // --------------------------------------------------------
-      // Import public key
+      // IMPORT PUBLIC KEY
       // --------------------------------------------------------
 
       const publicKey =
@@ -411,7 +433,7 @@
 
 
       // --------------------------------------------------------
-      // Verify
+      // VERIFY
       // --------------------------------------------------------
 
       const valid =
@@ -433,20 +455,22 @@
 
       return valid;
 
-    } catch (e) {
+    } catch (err) {
 
       error(
-        "Ed25519 verification exception:",
-        e
+        "Ed25519 verification failed:",
+        err
       );
 
       return false;
+
     }
+
   }
 
 
   // ============================================================
-  // PROCESS MESSAGE
+  // PROCESS PUBNUB MESSAGE
   // ============================================================
 
   async function processMessage(
@@ -459,22 +483,19 @@
     );
 
 
-    // ----------------------------------------------------------
-    // Empty message
-    // ----------------------------------------------------------
-
     if (!message) {
 
       warn(
-        "Ignored empty PubNub message."
+        "Ignored empty message."
       );
 
       return;
+
     }
 
 
     // ----------------------------------------------------------
-    // Only clear commands
+    // ONLY ACCEPT CLEAR
     // ----------------------------------------------------------
 
     if (
@@ -487,6 +508,7 @@
       );
 
       return;
+
     }
 
 
@@ -496,7 +518,7 @@
 
 
     // ----------------------------------------------------------
-    // Timestamp
+    // TIMESTAMP
     // ----------------------------------------------------------
 
     if (
@@ -509,11 +531,12 @@
       );
 
       return;
+
     }
 
 
     // ----------------------------------------------------------
-    // Nonce
+    // NONCE
     // ----------------------------------------------------------
 
     if (
@@ -526,11 +549,25 @@
       );
 
       return;
+
+    }
+
+
+    if (
+      message.nonce.length < 16
+    ) {
+
+      warn(
+        "Rejected: nonce is too short."
+      );
+
+      return;
+
     }
 
 
     // ----------------------------------------------------------
-    // Signature
+    // SIGNATURE
     // ----------------------------------------------------------
 
     if (
@@ -543,21 +580,24 @@
       );
 
       return;
+
     }
 
 
     // ----------------------------------------------------------
-    // Timestamp validation
+    // TIMESTAMP PROTECTION
     // ----------------------------------------------------------
 
     const now =
       Date.now();
+
 
     const age =
       Math.abs(
         now -
         message.timestamp
       );
+
 
     log(
       "Command age:",
@@ -576,11 +616,12 @@
       );
 
       return;
+
     }
 
 
     // ----------------------------------------------------------
-    // Replay protection
+    // REPLAY PROTECTION
     // ----------------------------------------------------------
 
     if (
@@ -594,16 +635,18 @@
       );
 
       return;
+
     }
 
 
     // ----------------------------------------------------------
-    // Verify signature
+    // CRYPTOGRAPHIC VERIFICATION
     // ----------------------------------------------------------
 
     log(
       "Checking Ed25519 signature..."
     );
+
 
     const valid =
       await verifySignature(
@@ -624,11 +667,12 @@
       );
 
       return;
+
     }
 
 
     // ----------------------------------------------------------
-    // Store nonce
+    // STORE NONCE
     // ----------------------------------------------------------
 
     usedNonces.add(
@@ -637,34 +681,39 @@
 
 
     /*
-     * Keep memory bounded.
+     * Prevent unlimited memory growth.
      */
     if (
       usedNonces.size >
       1000
     ) {
 
+      const iterator =
+        usedNonces.values();
+
+
       const oldest =
-        usedNonces
-          .values()
-          .next()
-          .value;
+        iterator.next().value;
+
 
       usedNonces.delete(
         oldest
       );
+
     }
 
 
     // ----------------------------------------------------------
-    // SUCCESS
+    // VALID COMMAND
     // ----------------------------------------------------------
 
     log(
-      "VALID SIGNED CLEAR."
+      "VALID SIGNED CLEAR COMMAND."
     );
 
+
     clearCanvas();
+
   }
 
 
@@ -675,12 +724,14 @@
   function initializePubNub() {
 
     if (pubnub) {
+
       return true;
+
     }
 
 
     // ----------------------------------------------------------
-    // Check PubNub SDK
+    // SDK CHECK
     // ----------------------------------------------------------
 
     if (
@@ -693,11 +744,12 @@
       );
 
       return false;
+
     }
 
 
     // ----------------------------------------------------------
-    // Subscribe key
+    // SUBSCRIBE KEY CHECK
     // ----------------------------------------------------------
 
     if (
@@ -711,24 +763,60 @@
       );
 
       return false;
+
     }
 
 
     // ----------------------------------------------------------
-    // Existing repository style
+    // PUBLIC KEY CHECK
     // ----------------------------------------------------------
 
-    /*
-     * The original Draw On My Face client uses:
-     *
-     *     window.PubNub({})
-     *
-     * We deliberately keep this style because the website is
-     * loading an older PubNub SDK.
-     */
+    if (
+      !PUBLIC_KEY_B64 ||
+      PUBLIC_KEY_B64 ===
+      "YOUR_PUBLIC_KEY"
+    ) {
 
-    pubnub =
-      window.PubNub({});
+      error(
+        "PUBLIC_KEY_B64 is not configured."
+      );
+
+      return false;
+
+    }
+
+
+    /*
+     * Draw On My Face uses the older PubNub SDK.
+     *
+     * Do NOT use:
+     *
+     *     new PubNub(...)
+     *
+     * here.
+     *
+     * The original project initializes it with:
+     *
+     *     PubNub({})
+     */
+    try {
+
+      pubnub =
+        window.PubNub({});
+
+    } catch (err) {
+
+      error(
+        "Could not initialize PubNub:",
+        err
+      );
+
+      pubnub =
+        null;
+
+      return false;
+
+    }
 
 
     log(
@@ -737,6 +825,7 @@
 
 
     return true;
+
   }
 
 
@@ -744,46 +833,83 @@
   // SUBSCRIBE
   // ============================================================
 
-function subscribe() {
+  function subscribe() {
 
-  if (!initializePubNub()) {
-    return;
-  }
+    if (
+      !initializePubNub()
+    ) {
 
-  if (subscribed) {
-    return;
-  }
+      return;
 
-  log(
-    "Subscribing to:",
-    PUBNUB_CHANNEL
-  );
+    }
 
-  pubnub.subscribe({
-    channel: PUBNUB_CHANNEL,
 
-    message: function(message) {
+    if (
+      subscribed
+    ) {
 
-      log(
-        "RAW PUBNUB MESSAGE:",
-        message
+      return;
+
+    }
+
+
+    log(
+      "Subscribing to:",
+      PUBNUB_CHANNEL
+    );
+
+
+    /*
+     * IMPORTANT:
+     *
+     * The Draw On My Face PubNub SDK expects "messages"
+     * here, not "message".
+     */
+    try {
+
+      pubnub.subscribe({
+
+        channel:
+          PUBNUB_CHANNEL,
+
+        messages:
+          function(message) {
+
+            processMessage(
+              message
+            );
+
+          }
+
+      });
+
+    } catch (err) {
+
+      error(
+        "PubNub subscribe failed:",
+        err
       );
 
-      processMessage(message);
+      return;
+
     }
-  });
 
-  subscribed = true;
 
-  log(
-    "Signed clear listener started."
-  );
+    subscribed =
+      true;
 
-  log(
-    "Channel:",
-    PUBNUB_CHANNEL
-  );
-}
+
+    log(
+      "Signed clear listener started."
+    );
+
+
+    log(
+      "Channel:",
+      PUBNUB_CHANNEL
+    );
+
+  }
 
 
   // ============================================================
@@ -795,8 +921,13 @@ function subscribe() {
     acquireCanvas();
 
     subscribe();
+
   }
 
+
+  // ============================================================
+  // START
+  // ============================================================
 
   initialize();
 
@@ -814,16 +945,9 @@ function subscribe() {
   /*
    * Only local clearing is exposed.
    *
-   * There is deliberately NO:
-   *
-   * queuePixel()
-   * flushPixels()
-   * setPixelMode()
-   * getLivePixelCount()
-   * clearUserPixels()
-   * network clear()
+   * There is deliberately no drawing API and no network
+   * clearing API.
    */
-
   window.DrawOnMyFace = {
 
     clearLocal:
