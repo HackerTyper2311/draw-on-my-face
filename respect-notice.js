@@ -5,9 +5,9 @@
   if (isOverlay) return;
 
   function createNotice() {
-    var bar = document.createElement('div');
-    bar.id = 'respectNotice';
+    var bar = document.createElement('p');
 
+    bar.id = 'respectNotice';
     bar.textContent =
       'Please be respectful — keep it kind and on-topic.';
 
@@ -16,16 +16,14 @@
     bar.style.justifyContent = 'center';
     bar.style.gap = '8px';
 
+    bar.style.margin = '0';
     bar.style.padding = '8px 16px';
     bar.style.background = '#fff8e6';
     bar.style.borderBottom = '1px solid #f0d38a';
     bar.style.color = '#7a5b12';
     bar.style.fontSize = '13px';
+    bar.style.lineHeight = 'normal';
     bar.style.textAlign = 'center';
-
-    // Override the global div { height: 100%; } rule
-    bar.style.height = 'auto';
-    bar.style.width = '100%';
     bar.style.boxSizing = 'border-box';
 
     document.body.prepend(bar);
