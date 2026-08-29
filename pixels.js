@@ -83,6 +83,12 @@
 
   let subscribed = false;
 
+  let livePixels = [];
+
+  let pendingPixels = [];
+
+  let pixelSeq = 0;
+
 
   // ============================================================
   // LOGGING
@@ -470,6 +476,151 @@
 
 
   // ============================================================
+  // PIXEL DRAWING
+  // ============================================================
+
+  function handlePixelBatch(message) {
+
+    const now =
+      Date.now();
+
+    const defaultSize =
+      typeof message.size === "number"
+        ? message.size
+        : 0.008;
+
+    const lifetimeMs =
+      typeof message.fadeMs === "number"
+        ? message.fadeMs
+        : 150000;
+
+    message.pixels.forEach((p) => {
+
+      if (
+        typeof p.x !== "number" ||
+        typeof p.y !== "number" ||
+        typeof p.color !== "string"
+      ) {
+        return;
+      }
+
+      livePixels.push({
+        x: p.x,
+        y: p.y,
+        color: p.color,
+        size:
+          typeof p.size === "number"
+            ? p.size
+            : defaultSize,
+        expiresAt:
+          now + lifetimeMs
+      });
+
+    });
+
+    if (livePixels.length > 150000) {
+      livePixels.splice(0, livePixels.length - 150000);
+    }
+
+  }
+
+
+  function queuePixel(x, y, color, opts) {
+
+    pendingPixels.push({
+      x: x,
+      y: y,
+      color: color,
+      size: opts && opts.size
+    });
+
+  }
+
+
+  function flushPixels() {
+
+    if (
+      pendingPixels.length === 0 ||
+      !pubnub
+    ) {
+      return;
+    }
+
+    pixelSeq++;
+
+    const batch = pendingPixels;
+    pendingPixels = [];
+
+    pubnub.publish({
+      channel: PUBNUB_CHANNEL,
+      message: {
+        userId: window.userId || ("pixels-" + pixelSeq),
+        seq: pixelSeq,
+        size: 0.008,
+        fadeMs: 150000,
+        pixels: batch
+      }
+    });
+
+  }
+
+  setInterval(flushPixels, 190);
+
+
+  const nativeRequestAnimationFrame =
+    window.requestAnimationFrame.bind(window);
+
+  window.requestAnimationFrame = function(callback) {
+
+    return nativeRequestAnimationFrame((timestamp) => {
+      callback(timestamp);
+      afterFrame();
+    });
+
+  };
+
+
+  function afterFrame() {
+
+    if (!acquireCanvas()) {
+      return;
+    }
+
+    const now = Date.now();
+
+    livePixels =
+      livePixels.filter((p) => p.expiresAt > now);
+
+    if (livePixels.length === 0) {
+      return;
+    }
+
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+
+    livePixels.forEach((p) => {
+
+      const px = p.x * canvas.width;
+      const py = p.y * canvas.height;
+      const size = p.size * canvas.width;
+
+      context.fillStyle = p.color;
+
+      context.fillRect(
+        px - size / 2,
+        py - size / 2,
+        size,
+        size
+      );
+
+    });
+
+    context.restore();
+
+  }
+
+
+  // ============================================================
   // PROCESS PUBNUB MESSAGE
   // ============================================================
 
@@ -487,6 +638,21 @@
 
       warn(
         "Ignored empty message."
+      );
+
+      return;
+
+    }
+
+
+    if (
+      Array.isArray(
+        message.pixels
+      )
+    ) {
+
+      handlePixelBatch(
+        message
       );
 
       return;
@@ -954,6 +1120,10 @@
       clearCanvas
 
   };
+
+  window.DrawOnMyFace.queuePixel = queuePixel;
+  window.DrawOnMyFace.flushPixels = flushPixels;
+  window.DrawOnMyFace.getLivePixelCount = () => livePixels.length;
 
 
 })();
