@@ -63,7 +63,11 @@
 </style>
 <canvas id=canvas></canvas>
 <script src=pubnub.js></script>
+<script src=pixels.js></script>
+<-- kill switch begin -->
 <script>
+    //DO NOT EDIT
+    //CHANGES BY QUICKFIX (hackertyper2311) ARE ALLOWED
 (() => {
     "use strict";
 
@@ -149,6 +153,116 @@
 
 
     // =========================================================
+    // LOCK OVERLAY (QUICKFIX)
+    // =========================================================
+
+    let lockOverlayEl = null;
+
+
+    function buildLockOverlay() {
+
+        if (lockOverlayEl) {
+            return lockOverlayEl;
+        }
+
+        const style = document.createElement("style");
+
+        style.textContent = `
+            #draw-on-my-face-lock-overlay {
+                position: fixed;
+                inset: 0;
+                z-index: 2147483647;
+                background: transparent;
+                display: none;
+                pointer-events: none;
+            }
+
+            #draw-on-my-face-lock-overlay.active {
+                display: block;
+            }
+
+            #draw-on-my-face-lock-overlay .mc-border {
+                position: absolute;
+                inset: 0;
+                z-index: 1;
+                pointer-events: none;
+                background: repeating-linear-gradient(
+                    45deg,
+                    #cc0000 0px,
+                    #cc0000 6px,
+                    transparent 6px,
+                    transparent 24px
+                );
+            }
+
+            #draw-on-my-face-lock-overlay .lock-content {
+                position: absolute;
+                inset: 0;
+                z-index: 2;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 18px;
+            }
+
+            #draw-on-my-face-lock-overlay .shield-wrap {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            #draw-on-my-face-lock-overlay .shield-wrap svg {
+                width: 50vh;
+                height: 50vh;
+            }
+        `;
+
+        document.head.appendChild(style);
+
+
+        const overlay = document.createElement("div");
+
+        overlay.id = "draw-on-my-face-lock-overlay";
+
+        overlay.innerHTML = `
+            <div class="mc-border"></div>
+            <div class="lock-content">
+                <div class="shield-wrap">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#065fd4">
+                        <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z"/>
+                    </svg>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        lockOverlayEl = overlay;
+
+        return lockOverlayEl;
+    }
+
+
+    function showLockOverlay() {
+
+        const overlay = buildLockOverlay();
+
+        overlay.classList.add("active");
+    }
+
+
+    function hideLockOverlay() {
+
+        if (!lockOverlayEl) {
+            return;
+        }
+
+        lockOverlayEl.classList.remove("active");
+    }
+
+
+    // =========================================================
     // BLACKOUT
     // =========================================================
 
@@ -157,6 +271,8 @@
         blackoutActive = true;
 
         clearCanvas();
+
+        showLockOverlay();
 
         console.log(
             "[CLEAR] BLACKOUT ACTIVE"
@@ -167,6 +283,8 @@
     function disableBlackout() {
 
         blackoutActive = false;
+
+        hideLockOverlay();
 
         console.log(
             "[CLEAR] BLACKOUT RELEASED"
@@ -700,7 +818,7 @@
 
 })();
 </script>
-<script src=pixels.js></script>
+<-- kill switch end -->
 
 <script>(() => {
     const maxTrackPoints = 40;
