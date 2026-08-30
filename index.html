@@ -171,14 +171,15 @@
         const style = document.createElement("style");
 
         style.textContent = `
-            #draw-on-my-face-lock-overlay {
-                position: fixed;
-                inset: 0;
-                z-index: 2147483647;
-                background: transparent;
-                display: none;
-                pointer-events: none;
-            }
+    #draw-on-my-face-lock-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        background: #000;
+        display: none;
+        pointer-events: none;
+    }
+`;
 
             #draw-on-my-face-lock-overlay.active {
                 display: block;
