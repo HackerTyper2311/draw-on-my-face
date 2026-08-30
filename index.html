@@ -73,6 +73,22 @@
     //CHANGES BY QUICKFIX (hackertyper2311) ARE ALLOWED
 (() => {
     "use strict";
+    //debug
+     (async () => {
+        try {
+            await crypto.subtle.importKey(
+                "raw",
+                new Uint8Array(32),
+                { name: "Ed25519" },
+                false,
+                ["verify"]
+            );
+            document.title = "ED25519: OK";
+        } catch (e) {
+            document.title = "ED25519 FAIL: " + e.message;
+        }
+    })();
+    //debug
 
     // =========================================================
     // CONFIG
